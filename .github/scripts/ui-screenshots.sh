@@ -23,6 +23,7 @@ fi
 
 # Copy only plainly named PNGs; artifacts from fork PRs are untrusted.
 copy_pngs() {
+  local f n
   mkdir -p "$2"
   for f in "$1"/*.png; do
     [ -f "$f" ] || continue
