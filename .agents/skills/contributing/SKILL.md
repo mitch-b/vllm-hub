@@ -12,6 +12,7 @@ description: How to make and ship any change to vLLM Hub - layout, local validat
   - `runner.py`: the sibling `vllm` container.
   - `downloads.py`: Hugging Face pulls.
   - `profiles.py`, `capacity.py`: sizing.
+  - `activity.py`: live caller activity sampled from vLLM's `/metrics` and access log.
   - `updates.py`, `updater.py`: self-update.
 - `src/app/static/index.html`: the entire UI (vanilla JS, no build step).
 - `src/tests/`: the pytest suite, `check_ui.mjs`, and `ui/` (Playwright screenshots).
