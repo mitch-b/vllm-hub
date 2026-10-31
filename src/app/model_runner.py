@@ -53,7 +53,7 @@ def request(connection: dict, method: str, path: str, **kwargs) -> httpx.Respons
 
 def discover() -> dict | None:
     with _discovery_lock:
-        if time.monotonic() - _discovery["at"] < 10:
+        if _discovery["at"] and time.monotonic() - _discovery["at"] < 10:
             return _discovery["connection"]
         configured = os.getenv("HUB_MODEL_RUNNER_URL")
         candidates = [{"url": configured}] if configured else [

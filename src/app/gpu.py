@@ -33,7 +33,7 @@ def _docker_gpu() -> dict | None:
 
     with _probe_lock:
         lifetime = 5 if _probe["gpu"] else 60
-        if time.monotonic() - _probe["at"] < lifetime:
+        if _probe["at"] and time.monotonic() - _probe["at"] < lifetime:
             return _probe["gpu"]
         probe = None
         try:

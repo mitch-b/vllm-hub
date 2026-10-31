@@ -410,6 +410,7 @@ def test_cuda_remains_default_for_nvidia_and_native_selection_is_sticky(native, 
 
 
 def test_gpu_probe_uses_own_image_and_caches_unavailable_devices(monkeypatch):
+    monkeypatch.setattr(gpu.time, "monotonic", lambda: 1.0)
     calls = []
     removed = []
 
@@ -442,6 +443,7 @@ def test_gpu_probe_uses_own_image_and_caches_unavailable_devices(monkeypatch):
 
 
 def test_gpu_probe_cleans_up_after_cdi_start_failure_and_caches_failure(monkeypatch):
+    monkeypatch.setattr(gpu.time, "monotonic", lambda: 1.0)
     removed, created = [], []
 
     def fail():
@@ -462,6 +464,7 @@ def test_gpu_probe_cleans_up_after_cdi_start_failure_and_caches_failure(monkeypa
 
 
 def test_model_runner_auto_discovery_socket_fallback_and_cache(monkeypatch):
+    monkeypatch.setattr(model_runner.time, "monotonic", lambda: 1.0)
     original = model_runner.discover
     calls = []
     monkeypatch.setattr(model_runner, "_discovery", {"at": 0.0, "connection": None, "error": None})
