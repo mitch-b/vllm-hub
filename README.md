@@ -92,6 +92,7 @@ A running model restarts with Docker (`unless-stopped`); **Stop** removes it so 
 | `VLLM_PORT` | `8000` | Host port for the vLLM API |
 | `HUB_UPDATE_CHECK` | `true` | Check the registry for a newer hub image |
 | `HUB_AUTO_UPDATE` | `false` | Install newer hub images automatically |
+| `HUB_BIND` | `127.0.0.1` | UI listen address; `0.0.0.0` for LAN access (no login, so trusted networks only) |
 
 ## API
 

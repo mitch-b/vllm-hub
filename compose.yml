@@ -5,7 +5,8 @@ services:
     image: ghcr.io/mitch-b/vllm-hub:latest # pulled by default; `up --build` builds ./src instead
     build: ./src
     ports:
-      - "127.0.0.1:7860:7860" # UI + API (localhost only: the app controls Docker)
+      # UI + API. Localhost by default because the app controls Docker; set HUB_BIND=0.0.0.0 for LAN access.
+      - "${HUB_BIND:-127.0.0.1}:7860:7860"
     gpus: all # only so the hub can read GPU/VRAM info via nvidia-smi
     environment:
       NVIDIA_DRIVER_CAPABILITIES: utility
