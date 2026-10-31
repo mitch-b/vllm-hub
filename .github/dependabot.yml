@@ -4,15 +4,39 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    open_pull_requests:
+      limit: 10
+    automerged_updates:
+      - match:
+          dependency_type: "all"
+          update_type: "all"
   - package-ecosystem: "docker"
     directory: "/src"
     schedule:
       interval: "weekly"
+    open_pull_requests:
+      limit: 10
+    automerged_updates:
+      - match:
+          dependency_type: "all"
+          update_type: "all"
   - package-ecosystem: "pip"
     directory: "/src"
     schedule:
       interval: "weekly"
+    open_pull_requests:
+      limit: 10
+    automerged_updates:
+      - match:
+          dependency_type: "all"
+          update_type: "all"
   - package-ecosystem: "devcontainers"
     directory: "/"
     schedule:
       interval: "weekly"
+    open_pull_requests:
+      limit: 10
+    automerged_updates:
+      - match:
+          dependency_type: "all"
+          update_type: "all"
