@@ -6,7 +6,7 @@ A local web UI for running Hugging Face models on [vLLM](https://docs.vllm.ai) w
 
 - **GPU-aware recommendations**: a curated list of coding models, each rated `fits`, `tight` or `too big` against your VRAM.
 - **Search Hugging Face** or paste any `org/model`.
-- **Pull progress**: bytes, speed and ETA, with cancel. Already-cached files are skipped.
+- **Pull progress**: bytes, speed and ETA, with cancel. Each model appears once in the Library, including while downloading. Run another cached model while a download continues in the background; **Download & run** still switches to the new model when it finishes. Already-cached files are skipped.
 - **Run / Stop** with automatic flags: GPU memory use, context length, KV-cache dtype, tool-call and reasoning parsers per model family. You can override the context and enable CUDA graphs.
 - **Local models**: list and delete what's cached.
 - **Live vLLM logs** and a quick test chat.

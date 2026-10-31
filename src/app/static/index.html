@@ -498,7 +498,7 @@ const phase = () => { const v = V();
   return 'idle';
 };
 const activeJob = id => S.jobs.find(j => j.repo_id === id && (j.status === 'downloading' || j.status === 'queued'));
-const isLocal = id => S.local.some(m => m.id === id);
+const isLocal = id => !activeJob(id) && S.local.some(m => m.id === id);
 const servedName = () => V().served?.id || '';
 
 /* ---------- Render: top bar ---------- */
@@ -656,7 +656,10 @@ function renderSnippets() {
 let libHtml = '';
 function renderLibrary() {
   const v = V(), p = phase();
-  const jobs = S.jobs.filter(j => !S.dismissed.has(j.id) && (j.status === 'downloading' || j.status === 'queued' || j.status === 'error' || j.status === 'cancelled'));
+  const latest = new Map();
+  for (const j of S.jobs) if (!latest.has(j.repo_id)) latest.set(j.repo_id, j);
+  const jobs = [...latest.values()].filter(j => !S.dismissed.has(j.id) && (j.status === 'downloading' || j.status === 'queued' || j.status === 'error' || j.status === 'cancelled'));
+  const jobModels = new Set(jobs.map(j => j.repo_id));
   const rows = [];
   for (const j of jobs) {
     const live = j.status === 'downloading' || j.status === 'queued';
@@ -670,7 +673,7 @@ function renderLibrary() {
         ${live ? `<button class="btn ghost sm" data-act="cancel-job" data-job="${esc(j.id)}">Cancel</button>`
           : `<button class="btn sm" data-act="pull" data-id="${esc(j.repo_id)}">Retry</button><button class="btn ghost icon sm" data-act="dismiss-job" data-job="${esc(j.id)}" aria-label="Dismiss">${icon('x')}</button>`}</div></div>`);
   }
-  const models = [...S.local].sort((a, b) => (b.last_used || 0) - (a.last_used || 0));
+  const models = S.local.filter(m => !jobModels.has(m.id)).sort((a, b) => (b.last_used || 0) - (a.last_used || 0));
   for (const m of models) {
     const current = v.model === m.id && (p === 'ready' || p === 'loading');
     const status = current ? (p === 'ready' ? '<span class="badge ok"><span class="dot"></span>Serving</span>' : '<span class="badge warn"><span class="dot pulse"></span>Starting</span>') : '';
@@ -685,7 +688,7 @@ function renderLibrary() {
     <b>Your library is empty</b><span>Download a model to run it locally.</span>
     <button class="btn primary" data-act="tab" data-tab="discover">${icon('search')}Discover models</button></div>`;
   if (html !== libHtml) { libHtml = html; $('#library').innerHTML = html; }
-  $('#libCount').textContent = S.local.length + jobs.filter(j => j.status !== 'error' && j.status !== 'cancelled').length;
+  $('#libCount').textContent = models.length + jobs.length;
 }
 
 /* ---------- Render: discover ---------- */
