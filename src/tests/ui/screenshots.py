@@ -174,6 +174,88 @@ def downloading_run(b):
     return p
 
 
+def download_finalizing(b):
+    jobs = fixture("downloading")
+    jobs[0].update(done=jobs[0]["total"], percent=99.9, finalizing=True, speed_bps=0, eta_s=None)
+    model_id = jobs[0]["repo_id"]
+    models = fixture("models") + [{"id": model_id, "size_gib": 0, "last_used": CAPTURED}]
+    p = open_page(b, {"jobs": jobs, "models": models, "search": [dict(fixture("recommended")[0], id=model_id)]})
+    p.click("#tab-library")
+    p.wait_for_selector('#library .meta:has-text("Finalizing snapshot")')
+    assert "100%" not in p.locator("#library").inner_text()
+    assert p.locator(f'#library [data-act="run"][data-id="{model_id}"]').count() == 0
+    assert p.locator('#library .item').count() == len(models)
+    p.click("#tab-discover")
+    p.fill("#q", model_id)
+    p.wait_for_selector('#discover .badge:has-text("Finalizing snapshot")')
+    assert p.locator('#discover [data-act="run"]').count() == 0
+    p.click("#tab-library")
+    # Rounding a near-complete progress value must not display 100% either.
+    p.evaluate("S.jobs[0].finalizing = false; renderAll()")
+    assert "99%" in p.locator("#library").inner_text()
+    assert "100%" not in p.locator("#library").inner_text()
+    p.evaluate("S.jobs[0].finalizing = true; renderAll()")
+    return p
+
+
+def download_completion(b):
+    p = download_finalizing(b)
+    job = dict(fixture("downloading")[0], status="done", percent=100, finalizing=False)
+    model_id = job["repo_id"]
+    models = fixture("models") + [{"id": model_id, "size_gib": 16.9, "last_used": CAPTURED}]
+    p.route(f"{BASE}/api/jobs", lambda r: r.fulfill(content_type="application/json", body=json.dumps([job])))
+    responses = ["error", "stale", "ready"]
+
+    def cache(route):
+        response = responses.pop(0) if responses else "ready"
+        route.fulfill(
+            status=503 if response == "error" else 200,
+            content_type="application/json",
+            body=json.dumps({"detail": "Cache temporarily unavailable"} if response == "error"
+                            else models if response == "ready" else []),
+        )
+
+    p.route(f"{BASE}/api/models", cache)
+    # First observation is already done: reload/missed polling must still refresh.
+    p.evaluate("S.prevJob = {}; S.local = []; refreshJobs()")
+    p.wait_for_selector('#library .meta:has-text("Updating library")')
+    assert p.locator('#library [data-act="run"]').count() == 0
+    assert p.evaluate("S.prevJob.download1") is None
+    assert "Could not refresh library" in p.locator("#toasts").inner_text()
+    p.evaluate("refreshJobs()")
+    assert p.locator('#library [data-act="run"]').count() == 0
+    p.evaluate("refreshJobs()")
+    p.wait_for_selector(f'#library [data-act="run"][data-id="{model_id}"]')
+    assert p.locator('#library .item').count() == len(models)
+    assert p.evaluate("S.prevJob.download1") == "done"
+    assert "Download complete" not in p.locator("#toasts").inner_text()
+
+    # A stale /models response arriving after completion must recover on the next poll.
+    p.evaluate("S.local = []; refreshJobs()")
+    p.wait_for_selector(f'#library [data-act="run"][data-id="{model_id}"]')
+    requests = []
+    p.route(
+        f"{BASE}/api/run",
+        lambda r: (requests.append(r.request.post_data_json),
+                   r.fulfill(content_type="application/json", body='{"context":32768}')),
+    )
+    p.route(f"{BASE}/api/pull", lambda r: r.fulfill(content_type="application/json", body=json.dumps(job)))
+    # /pull itself can return done before the first /jobs poll (fully cached / fast job).
+    with p.expect_request(f"{BASE}/api/run"):
+        p.evaluate("id => pull(id, {id, context:32768, graphs:false, util:0.9, w:16.9})", model_id)
+    p.evaluate("refreshJobs()")
+    assert len(requests) == 1 and requests[0]["repo_id"] == model_id
+    assert p.evaluate("Object.keys(S.runAfter).length") == 0
+    # Actual reload: the initial cache request predates completion, the first job poll is done.
+    responses[:] = ["stale", "ready"]
+    p.reload()
+    p.click("#tab-library")
+    p.wait_for_selector(f'#library [data-act="run"][data-id="{model_id}"]')
+    assert p.locator('#library .item').count() == len(models)
+    assert len(requests) == 1
+    return p
+
+
 def console(b):
     p = overview(b)
     toggle(p, "console")
@@ -272,7 +354,7 @@ def update(b):
 SCENES = {
     f.__name__.replace("_dialog", ""): f
     for f in (overview, connect, playground, run_dialog, discover, downloading, downloading_run,
-              console, starting, warming, capturing, update)
+              download_finalizing, download_completion, console, starting, warming, capturing, update)
 }
 
 
