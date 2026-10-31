@@ -27,12 +27,13 @@ def fixture(name):
     return json.loads((FIX / f"{name}.json").read_text(encoding="utf-8"))
 
 
-def open_page(browser, overrides=None):
+def open_page(browser, overrides=None, *, platform=None):
     data = {n: fixture(n) for n in ("system", "models", "version", "recommended", "jobs", "search", "chat", "activity")}
     data.update(overrides or {})
     shift = time.time() - CAPTURED
     for m in data["models"]:
-        m["last_used"] += shift
+        if m["last_used"]:
+            m["last_used"] += shift
     data["version"]["checked_at"] += shift
     act = data["activity"]
     if act.get("serving"):
@@ -49,6 +50,11 @@ def open_page(browser, overrides=None):
             if startup.get(key) is not None:
                 startup[key] += shift
     page = browser.new_page(viewport=VIEWPORT, color_scheme="dark")
+    if platform:
+        page.add_init_script(
+            "Object.defineProperty(navigator, 'userAgentData', {value: "
+            + json.dumps({"platform": platform}) + "});"
+        )
 
     def api(route):
         path = route.request.url.split(BASE, 1)[1].split("?")[0]
@@ -81,6 +87,16 @@ def overview(b):
 
 
 def connect(b):
+    for platform, shell in (("Windows", "pwsh"), ("macOS", "bash"), ("Linux", "bash")):
+        page = open_page(b, platform=platform)
+        toggle(page, "connect")
+        page.wait_for_selector("#cliCode")
+        assert page.evaluate("conn.shell") == shell
+        page.evaluate("conn.shell = 'cmd'; saveConn()")
+        page.reload()
+        page.wait_for_selector("#tab-library")
+        assert page.evaluate("conn.shell") == "cmd"
+        page.close()
     p = overview(b)
     toggle(p, "connect")
     p.wait_for_selector("#cliCode")
@@ -470,11 +486,163 @@ def update(b):
     return p
 
 
+def hosting_page(b, environment):
+    system = fixture("system")
+    system["gpu"] = None
+    system["recommended_util"] = None
+    system["hosting"] = {"local_inference": fixture("hosting")[environment]}
+    system["vllm"] = {
+        "docker_ok": environment != "no_docker",
+        "state": "stopped", "model": None, "ready": False,
+    }
+    p = open_page(b, {"system": system})
+    p.click("#tab-library")
+    p.wait_for_selector('#library [data-act="run"]:disabled')
+    assert p.locator('#library [data-act="run"]:enabled').count() == 0
+    p.locator('#library [data-act="menu-local"]').first.click()
+    assert "Run with options" not in p.locator(".menu").inner_text()
+    p.keyboard.press("Escape")
+    p.click("#tab-discover")
+    p.wait_for_selector('#discover [data-act="pull"]:enabled')
+    assert p.locator('#discover [data-act="run"]:enabled').count() == 0
+    assert "Model catalog" in p.locator("#discLabel").text_content()
+    assert p.locator('#discover .badge:has-text("Fits")').count() == 0
+    assert p.locator("#showAll").is_disabled()
+    requests = []
+    p.route(f"{BASE}/api/run", lambda r: (
+        requests.append(r.request.post_data_json),
+        r.fulfill(content_type="application/json", body="{}"),
+    ))
+    p.evaluate("startModel({id:'fixture/model'}); openRunDialog('fixture/model', 4)")
+    assert p.locator("#runDlg[open]").count() == 0
+    assert requests == []
+    job = dict(fixture("downloading")[0], status="queued")
+    p.route(f"{BASE}/api/pull", lambda r: r.fulfill(
+        content_type="application/json", body=json.dumps(job)))
+    with p.expect_request(f"{BASE}/api/pull"):
+        p.locator('#discover [data-act="pull"]:enabled').first.click()
+    assert p.evaluate("Object.keys(S.runAfter).length") == 0
+    # Capability recovery re-enables the same UI without a reload.
+    p.evaluate("""support => {
+        window.unavailableSystem = S.sys;
+        S.sys = support;
+        renderAll();
+    }""", fixture("system"))
+    assert p.locator('#library [data-act="run"]:enabled').count() > 0
+    p.evaluate("S.runAfter.pending = {id:'fixture/model'}; refreshSystem()")
+    assert p.evaluate("Object.keys(S.runAfter).length") == 0
+    assert "Queued starts cancelled" in p.locator("#toasts").inner_text()
+    p.evaluate("S.tab = 'library'; renderTabs(); $('#toasts').replaceChildren()")
+    return p
+
+
+def macos(b):
+    data = fixture("native")
+    system = data["system"]
+    p = open_page(b, {**data, "jobs": []})
+    p.click("#tab-library")
+    p.wait_for_selector('#library [data-act="run"]:enabled')
+    assert "Model Runner" in p.locator("#gpu").inner_text()
+    p.locator('#library [data-act="run"]').first.click()
+    p.wait_for_selector("#runDlg[open]")
+    assert p.locator("#runDlg details").is_hidden()
+    assert p.locator('#ctxSeg [data-v="0"]').get_attribute("aria-checked") == "true"
+    requests = []
+
+    def start(route):
+        request = route.request.post_data_json
+        requests.append(request)
+        system["vllm"].update(
+            state="running", ready=True, model=request["repo_id"], context=8192,
+            engine="llama.cpp", served={"id": request["repo_id"], "max_model_len": 8192},
+        )
+        route.fulfill(content_type="application/json", body='{"context":8192,"util":null,"args":[]}')
+
+    p.route(f"{BASE}/api/system", lambda r: r.fulfill(
+        content_type="application/json", body=json.dumps(system)))
+    p.route(f"{BASE}/api/run", start)
+    with p.expect_request(f"{BASE}/api/run"):
+        p.click("#runGo")
+    p.wait_for_function("S.sys.vllm.ready")
+    assert requests[0]["graphs"] is False and requests[0]["util"] is None
+    assert requests[0]["context"] is None
+    assert p.locator('#rtMain [data-target="activity"]').count() == 0
+    assert p.locator('#rtMain [data-target="console"]').count() == 0
+    toggle(p, "connect")
+    p.wait_for_selector("#cliCode")
+    assert "http://localhost:12434/engines/v1" in p.locator("#cliCode").inner_text()
+    assert "ai/qwen3:0.6B-Q4_K_M" in p.locator("#cliCode").inner_text()
+    assert p.evaluate("conn.shell") == "bash"
+    assert "COPILOT_MODEL=ai/qwen3:0.6B-Q4_K_M" in p.locator("#cliCode").inner_text()
+    limits = p.evaluate("tokenLimits()")
+    assert limits["prompt"] + limits["out"] == 8192
+    toggle(p, "connect")
+    return p
+
+
+def macos_mobile(b):
+    p = macos(b)
+    p.set_viewport_size({"width": 390, "height": 844})
+    assert p.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    return p
+
+
+def macos_start_failed(b):
+    data = fixture("native")
+    data["system"]["vllm"].update(
+        state="exited", model=data["models"][0]["id"], context=8192,
+        error="Native engine could not load the model. Check Docker Desktop Models for details.",
+    )
+    p = open_page(b, {**data, "jobs": []})
+    assert "Start failed" in p.locator("#rtMain").inner_text()
+    assert "Native engine could not load" in p.locator("#rtMain").inner_text()
+    assert p.locator('#rtMain [data-target="console"]').count() == 0
+    assert p.locator('#rtMain [data-act="restart"]').is_enabled()
+    return p
+
+
+def macos_connection_lost(b):
+    p = macos(b)
+    serving = p.evaluate("S.sys")
+
+    def disconnected(route):
+        route.fulfill(status=502, content_type="application/json",
+                      body='{"detail":"Native management connection lost"}')
+
+    p.route(f"{BASE}/api/system", disconnected)
+    p.evaluate("S.runAfter.pending = {id: 'fixture/model'}; refreshSystem()")
+    assert "Inference status unavailable" in p.locator("#rtMain").inner_text()
+    assert "Native management connection lost" in p.locator("#rtMain").inner_text()
+    assert "Serving" not in p.locator("#rtMain").inner_text()
+    assert p.locator('#library [data-act="run"]:enabled').count() == 0
+    assert p.evaluate("Object.keys(S.runAfter).length") == 0
+    p.route(f"{BASE}/api/system", lambda route: route.fulfill(
+        content_type="application/json", body=json.dumps(serving)))
+    p.evaluate("refreshSystem()")
+    assert "Serving" in p.locator("#rtMain").inner_text()
+    p.route(f"{BASE}/api/system", disconnected)
+    p.evaluate("refreshSystem()")
+    return p
+
+
+def no_gpu(b):
+    p = hosting_page(b, "no_gpu")
+    assert "Set up local inference" in p.locator("#rtMain").inner_text()
+    return p
+
+
+def no_docker(b):
+    p = hosting_page(b, "no_docker")
+    assert "Docker is unreachable" in p.locator("#rtMain").inner_text()
+    return p
+
+
 SCENES = {
     f.__name__.replace("_dialog", ""): f
     for f in (overview, connect, playground, activity, run_dialog, discover, downloading, downloading_run,
               download_finalizing, download_completion, console, starting, warming, capturing,
-              cancelled_start, console_recovery, update)
+              cancelled_start, console_recovery, update, macos, macos_mobile, macos_start_failed,
+              macos_connection_lost, no_gpu, no_docker)
 }
 
 

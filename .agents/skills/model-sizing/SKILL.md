@@ -5,6 +5,13 @@ description: How vLLM Hub picks GPU memory, context length and Copilot token lim
 
 # Model sizing
 
+The fit ratings, utilization flags and learned KV-cache rules below apply to
+the CUDA vLLM backend. `src/app/model_runner.py` handles native engines
+separately: Auto context defaults to 8K, capped by reported model metadata.
+Missing maximum-context metadata remains unknown, not an invented 8K limit.
+Do not apply CUDA flags or VRAM-fit claims to native models. Both backends
+must preserve the Connect prompt + output = context invariant.
+
 - `src/app/profiles.py` holds the curated models and is covered by `src/tests/test_profiles.py`. It contains:
   - per-family flags (tool-call and reasoning parsers, KV dtype),
   - the fit ratings,

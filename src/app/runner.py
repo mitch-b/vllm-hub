@@ -13,7 +13,7 @@ from docker.errors import DockerException, NotFound
 from docker.types import DeviceRequest
 
 from . import capacity, profiles
-from .gpu import gpu_info
+from .gpu import gpu_info, reset_probe
 
 CONTAINER = os.getenv("VLLM_CONTAINER", "vllm")
 IMAGE = os.getenv("VLLM_IMAGE", "vllm/vllm-openai:latest")
@@ -29,6 +29,10 @@ _start_cancel: Event | None = None
 
 
 class StartCancelled(RuntimeError):
+    pass
+
+
+class GPUUnavailable(RuntimeError):
     pass
 
 
@@ -166,6 +170,7 @@ def stop() -> None:
         c = _container()
         if c is not None:
             c.remove(force=True)
+        reset_probe()
 
 
 def _wait_vram_free(cancel: Event, timeout: float = 20) -> None:
@@ -183,6 +188,8 @@ def _wait_vram_free(cancel: Event, timeout: float = 20) -> None:
 def start(model_id: str, context: int | None = None, util: float | None = None,
           graphs: bool = False, extra: list[str] | None = None, weights_gib: float | None = None) -> dict:
     global _start_cancel
+    if gpu_info() is None:
+        raise GPUUnavailable("CUDA vLLM requires an NVIDIA GPU. Enable Docker Model Runner for Metal or CPU inference.")
     with _lifecycle_lock:
         stop()
         cancel = _start_cancel = Event()

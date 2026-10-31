@@ -1,0 +1,12 @@
+{
+  "no_gpu": {
+    "available": false,
+    "reason": "runtime_unavailable",
+    "message": "Enable Docker Model Runner in Docker Desktop Settings > AI, then enable host-side TCP access to use the model from Copilot. On Linux, install docker-model-plugin and run docker model install-runner. The hub reconnects automatically. NVIDIA hosts can also use the NVIDIA container runtime."
+  },
+  "no_docker": {
+    "available": false,
+    "reason": "docker_unavailable",
+    "message": "The hub cannot reach Docker. Check that Docker is running and /var/run/docker.sock is mounted. Browsing and downloads remain available."
+  }
+}
