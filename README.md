@@ -10,6 +10,7 @@ A local web UI for running Hugging Face models on [vLLM](https://docs.vllm.ai) w
 - **Run / Stop** with automatic flags: GPU memory use, context length, KV-cache dtype, tool-call and reasoning parsers per model family. You can override the context and enable CUDA graphs.
 - **Local models**: list and delete what's cached.
 - **Live vLLM logs** and a quick test chat.
+- **Activity**: live tokens/s, active requests, KV-cache use, callers and recent requests while a model is serving.
 
 ## Screenshots
 
@@ -20,6 +21,8 @@ A local web UI for running Hugging Face models on [vLLM](https://docs.vllm.ai) w
 | [![Search Hugging Face and recommendations rated for your GPU](https://raw.githubusercontent.com/mitch-b/vllm-hub/ui-screenshots/main/discover.png)](https://raw.githubusercontent.com/mitch-b/vllm-hub/ui-screenshots/main/discover.png) | [![Run dialog with context and GPU memory settings](https://raw.githubusercontent.com/mitch-b/vllm-hub/ui-screenshots/main/run.png)](https://raw.githubusercontent.com/mitch-b/vllm-hub/ui-screenshots/main/run.png) |
 | **Playground** | **Console** |
 | [![Quick test chat with tokens per second](https://raw.githubusercontent.com/mitch-b/vllm-hub/ui-screenshots/main/playground.png)](https://raw.githubusercontent.com/mitch-b/vllm-hub/ui-screenshots/main/playground.png) | [![Live vLLM logs](https://raw.githubusercontent.com/mitch-b/vllm-hub/ui-screenshots/main/console.png)](https://raw.githubusercontent.com/mitch-b/vllm-hub/ui-screenshots/main/console.png) |
+| **Activity** | |
+| [![Live throughput, callers and recent requests](https://raw.githubusercontent.com/mitch-b/vllm-hub/ui-screenshots/main/activity.png)](https://raw.githubusercontent.com/mitch-b/vllm-hub/ui-screenshots/main/activity.png) | |
 
 These images are rendered from mocked data by CI and refresh automatically when UI changes merge.
 
@@ -113,6 +116,14 @@ output keeps the generic stage and the **Console** remains available for details
 start time, elapsed seconds, stage, optional counts, last-log timestamp and any log-read
 error; it is `null` once ready or exited.
 
+### Activity
+
+Open **Activity** while a model is serving to see who is using it: generation and prompt tokens/s, active and queued requests and KV-cache use (with 15-minute sparklines), totals such as average time to first token and prefix-cache hit rate, a per-caller table and the most recent requests.
+
+The hub samples vLLM's Prometheus endpoint (`/metrics`) and its HTTP access log every 5 seconds in the background and keeps the last 15 minutes in memory. Nothing is stored or sent anywhere, and no extra containers are needed. Health checks and the hub's own status polling are left out. Callers are identified by address: everything on this computer reaches vLLM through the published port and appears as **This computer**, the playground appears as **vLLM Hub**, and other machines show their IP. `GET /api/activity` returns the same data as JSON (`serving: false` when no model is ready).
+
+For history beyond 15 minutes or alerting, point your own Prometheus (or Grafana Alloy) at `http://localhost:8000/metrics`; vLLM's metric names start with `vllm:`.
+
 ## Configuration
 
 | Variable | Default | Purpose |
@@ -123,11 +134,12 @@ error; it is `null` once ready or exited.
 | `VLLM_PORT` | `8000` | Host port for the vLLM API |
 | `HUB_UPDATE_CHECK` | `true` | Check the registry for a newer hub image |
 | `HUB_AUTO_UPDATE` | `false` | Install newer hub images automatically |
+| `HUB_ACTIVITY_INTERVAL` | `5` | Seconds between Activity samples of vLLM's metrics and access log |
 | `HUB_BIND` | `127.0.0.1` | UI listen address; `0.0.0.0` for LAN access (no login, so trusted networks only) |
 
 ## API
 
-`GET /api/system` · `GET /api/search?q=` · `GET /api/recommended` · `GET|DELETE /api/models` · `POST /api/pull` · `GET /api/jobs` · `POST /api/jobs/{id}/cancel` · `POST /api/run` · `POST /api/stop` · `GET /api/logs` · `POST /api/chat` · `GET /api/version?refresh=1` · `POST /api/update` · `GET /healthz`
+`GET /api/system` · `GET /api/search?q=` · `GET /api/recommended` · `GET|DELETE /api/models` · `POST /api/pull` · `GET /api/jobs` · `POST /api/jobs/{id}/cancel` · `POST /api/run` · `POST /api/stop` · `GET /api/logs` · `GET /api/activity` · `POST /api/chat` · `GET /api/version?refresh=1` · `POST /api/update` · `GET /healthz`
 
 ## Notes
 

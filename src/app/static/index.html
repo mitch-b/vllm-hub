@@ -159,6 +159,30 @@ ol.steps .field { margin-top: 6px; }
 .snip .label { font-size: 12px; color: var(--subtle); margin: 0 0 6px 2px; }
 .snip .copy { position: absolute; top: 30px; right: 8px; }
 
+/* Activity */
+.act { display: grid; gap: 16px; }
+.tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 820px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.tile { padding: 12px 14px 0; border-radius: 11px; background: var(--surface-2); border: 1px solid var(--border); display: grid; gap: 2px; overflow: hidden; min-width: 0; }
+.tile .k { font-size: 11.5px; color: var(--subtle); font-weight: 550; text-transform: uppercase; letter-spacing: .06em; }
+.tile .v { font-size: 22px; font-weight: 650; letter-spacing: -.02em; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile .v small { font-size: 12px; color: var(--subtle); font-weight: 500; margin-left: 4px; letter-spacing: 0; }
+svg.spark { display: block; width: calc(100% + 28px); height: 44px; margin: 6px -14px 0; }
+svg.spark .area { fill: var(--accent-soft); }
+svg.spark .line { fill: none; stroke: var(--accent); stroke-width: 1.6; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.facts { display: flex; flex-wrap: wrap; gap: 6px; }
+.act-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr); gap: 18px; }
+@media (max-width: 820px) { .act-cols { grid-template-columns: minmax(0, 1fr); } }
+.act-cols h4 { margin: 0 0 4px; font-size: 12px; color: var(--subtle); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+.scroll { max-height: 236px; overflow: auto; }
+table.mini { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.mini th, table.mini td { padding: 7px 8px; border-top: 1px solid var(--border); text-align: left; white-space: nowrap; }
+table.mini th { position: sticky; top: 0; background: var(--surface); border-top: 0; font-size: 11.5px; color: var(--subtle); font-weight: 550; }
+table.mini .num { text-align: right; font-variant-numeric: tabular-nums; }
+table.mini td.path { max-width: 0; width: 100%; overflow: hidden; text-overflow: ellipsis; }
+table.mini .mono { font-size: 12px; }
+.who .ip { color: var(--subtle); margin-left: 6px; font-family: var(--mono); font-size: 12px; }
+
 /* Playground */
 .chat { display: grid; gap: 12px; }
 .msgs { display: grid; gap: 10px; max-height: 340px; overflow: auto; }
@@ -299,6 +323,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
   <symbol id="i-lock" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></g></symbol>
   <symbol id="i-send" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 19V5m0 0-6 6m6-6 6 6"/></symbol>
   <symbol id="i-restart" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4.5 4v4h4"/></symbol>
+  <symbol id="i-activity" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3 12h4l3-7 4 14 3-7h4"/></symbol>
 </svg>
 
 <header class="topbar">
@@ -332,6 +357,12 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
           <button class="btn accent icon" id="sendBtn" aria-label="Send"><svg><use href="#i-send"/></svg></button>
         </form>
       </div>
+    </div>
+
+    <div class="drawer" id="activity" hidden>
+      <div class="drawer-head"><h3>Activity</h3><span class="hint">Requests from Copilot and other clients using this model</span><div class="spacer"></div>
+        <button class="btn ghost icon sm" data-act="toggle" data-target="activity" aria-label="Close"><svg><use href="#i-x"/></svg></button></div>
+      <div class="drawer-body act" id="actBody"></div>
     </div>
 
     <div class="drawer" id="console" hidden>
@@ -551,7 +582,7 @@ function renderRuntime() {
         <div class="eyebrow"><span class="dot" style="background:var(--ok);box-shadow:0 0 0 4px var(--ok-soft)"></span>Serving</div>
         <h2 class="rt-title">${nameHtml(v.model)}</h2>
         <div class="rt-sub"><span class="badge">${fmtCtx(+v.context)} context</span><span class="badge">port ${esc(v.port)}</span></div></div>
-        <div class="rt-actions">${toggles(['connect', 'term', 'Connect'], ['playground', 'chat', 'Try it'], ['console', 'code', 'Console'])}
+        <div class="rt-actions">${toggles(['connect', 'term', 'Connect'], ['playground', 'chat', 'Try it'], ['activity', 'activity', 'Activity'], ['console', 'code', 'Console'])}
           <button class="btn danger" data-act="stop">${icon('stop')}Stop</button></div></div>
         <div class="endpoint">
           <div class="field"><label>Base URL</label><code>${esc(v.url)}</code><button class="btn ghost icon sm" data-act="copy" data-text="${esc(v.url)}" aria-label="Copy base URL">${icon('copy')}</button></div>
@@ -561,7 +592,7 @@ function renderRuntime() {
     renderSnippets();
   }
   const canChat = p === 'ready';
-  for (const t of ['connect', 'playground', 'console']) {
+  for (const t of ['connect', 'playground', 'activity', 'console']) {
     const allowed = t === 'console' ? ['loading', 'ready', 'exited'].includes(p) : canChat;
     $('#' + t).hidden = !(allowed && S.open.has(t));
   }
@@ -986,6 +1017,56 @@ async function streamLogs() {
   }
 }
 
+/* ---------- Activity ---------- */
+const fmtSecs = s => s == null ? '—' : s < 10 ? s.toFixed(2) + 's' : s < 60 ? s.toFixed(1) + 's' : fmtDur(Math.round(s));
+const fmtRate = n => n >= 1000 ? fmtNum(n) : n >= 100 ? Math.round(n) : (+n || 0).toFixed(1);
+const ago = (now, t) => { const d = Math.max(0, Math.round(now - t));
+  return d < 60 ? d + 's ago' : d < 3600 ? Math.floor(d / 60) + 'm ago' : Math.floor(d / 3600) + 'h ago'; };
+function spark(a, pick, max) {
+  const pts = a.history.map(s => [Math.max(0, 100 - (a.now - s.t) / a.window * 100), 31 - Math.min(1, (pick(s) || 0) / max) * 28]);
+  if (pts.length < 2) return `<svg class="spark" viewBox="0 0 100 32" preserveAspectRatio="none"></svg>`;
+  const f = n => n.toFixed(2), line = pts.map(([x, y], i) => `${i ? 'L' : 'M'}${f(x)},${f(y)}`).join('');
+  return `<svg class="spark" viewBox="0 0 100 32" preserveAspectRatio="none" aria-hidden="true">
+    <path class="area" d="${line}L${f(pts.at(-1)[0])},32L${f(pts[0][0])},32Z"/><path class="line" d="${line}"/></svg>`;
+}
+function tile(a, label, value, unit, pick, floor) {
+  const peak = Math.max(0, ...a.history.map(s => pick(s) || 0));
+  return `<div class="tile" title="Last ${Math.round(a.window / 60)} min, peak ${fmtRate(peak)}${unit === '%' ? '%' : ' ' + unit.split(' ')[0]}">
+    <div class="k">${label}</div><div class="v">${value}<small>${unit}</small></div>${spark(a, pick, Math.max(floor, peak))}</div>`;
+}
+const caller = c => `<span class="who"><b>${esc(c.label || 'Network client')}</b><span class="ip">${esc(c.client)}</span></span>`;
+function renderActivity() {
+  const el = $('#actBody'), a = S.act;
+  if (!a) { el.innerHTML = `<div class="skeleton" style="height:120px"></div>`; return; }
+  if (!a.serving) { el.innerHTML = `<div class="subtle">Collecting the first samples from vLLM…</div>`; return; }
+  const c = a.current, t = a.totals, load = s => s.running + s.waiting;
+  const facts = [`${fmtNum(t.requests)} requests served`, `${fmtNum(t.prompt_tokens)} tokens in · ${fmtNum(t.generation_tokens)} out`,
+    t.avg_ttft_s != null && `Avg first token ${fmtSecs(t.avg_ttft_s)}`, t.avg_latency_s != null && `Avg request ${fmtSecs(t.avg_latency_s)}`,
+    t.prefix_cache_hit != null && `Prefix cache hit ${Math.round(t.prefix_cache_hit * 100)}%`].filter(Boolean);
+  const callers = a.callers.length ? `<div class="scroll"><table class="mini"><thead><tr><th>Caller</th><th class="num">Requests</th><th class="num">Errors</th><th class="num">Last seen</th></tr></thead><tbody>
+      ${a.callers.map(x => `<tr><td>${caller(x)}</td><td class="num">${x.requests}</td><td class="num">${x.errors ? `<span class="badge bad">${x.errors}</span>` : '0'}</td><td class="num subtle">${ago(a.now, x.last_seen)}</td></tr>`).join('')}
+    </tbody></table></div>` : `<div class="subtle">No requests yet. Point Copilot or any OpenAI client at the base URL above.</div>`;
+  const recent = a.recent.length ? `<div class="scroll"><table class="mini"><thead><tr><th>When</th><th>Caller</th><th>Request</th><th class="num">Status</th></tr></thead><tbody>
+      ${a.recent.map(r => `<tr><td class="subtle">${ago(a.now, r.t)}</td><td>${esc(r.label || r.client)}</td><td class="path mono" title="${esc(r.method + ' ' + r.path)}">${esc(r.method)} ${esc(r.path)}</td>
+        <td class="num"><span class="badge ${r.status >= 400 ? 'bad' : 'ok'}">${r.status}</span></td></tr>`).join('')}
+    </tbody></table></div>` : `<div class="subtle">Requests appear here as they arrive.</div>`;
+  el.innerHTML = `<div class="tiles">
+      ${tile(a, 'Generating', fmtRate(c.gen_tps), 'tok/s', s => s.gen_tps, 1)}
+      ${tile(a, 'Prompt', fmtRate(c.prompt_tps), 'tok/s', s => s.prompt_tps, 1)}
+      ${tile(a, 'Requests', c.running, c.waiting ? `active · ${c.waiting} queued` : 'active', load, 1)}
+      ${tile(a, 'KV cache', Math.round(c.kv_cache * 100), '%', s => s.kv_cache * 100, 100)}
+    </div>
+    <div class="facts">${facts.map(f => `<span class="badge">${esc(f)}</span>`).join('')}</div>
+    <div class="act-cols"><div><h4>Callers</h4>${callers}</div><div><h4>Recent requests</h4>${recent}</div></div>
+    <div class="subtle">Sampled every ${a.interval}s from vLLM's metrics and access log, kept in memory for ${Math.round(a.window / 60)} min. Callers on this computer share one address.
+      For long-term dashboards, scrape <code>${esc(a.metrics_url)}</code> with Prometheus or Grafana.</div>`;
+}
+async function loadActivity() {
+  if (!S.open.has('activity') || phase() !== 'ready') { S.act = null; return; }
+  try { S.act = await api('/api/activity'); } catch { return; }
+  if (S.open.has('activity')) renderActivity();
+}
+
 /* ---------- Playground ---------- */
 function renderChat() {
   const box = $('#msgs');
@@ -1020,7 +1101,7 @@ document.addEventListener('click', e => {
   switch (act) {
     case 'tab': S.tab = b.dataset.tab; store.set('tab', S.tab); renderTabs(); if (S.tab === 'discover') { renderDiscover(); setTimeout(() => $('#q').focus(), 0); } break;
     case 'toggle': S.open.has(target) ? S.open.delete(target) : S.open.add(target); renderRuntime();
-      if (S.open.has(target)) { if (target === 'playground') { renderChat(); $('#prompt').focus(); } if (target === 'console') { if (!logAbort) streamLogs(); const l = $('#logs'); l.scrollTop = l.scrollHeight; } } break;
+      if (S.open.has(target)) { if (target === 'playground') { renderChat(); $('#prompt').focus(); } if (target === 'activity') { renderActivity(); loadActivity(); } if (target === 'console') { if (!logAbort) streamLogs(); const l = $('#logs'); l.scrollTop = l.scrollHeight; } } break;
     case 'copy': copy(b.dataset.from ? $('#' + b.dataset.from).textContent : b.dataset.text); break;
     case 'conn': conn[b.dataset.k] = b.dataset.v; saveConn(); renderSnippets(); break;
     case 'update-open': openUpdate(); break;
@@ -1076,6 +1157,7 @@ document.addEventListener('keydown', e => {
   setTimeout(jobTick, 1000);
   setInterval(() => { if (phase() === 'loading') renderRuntime(); }, 1000);
   loadVersion(); setInterval(loadVersion, 30 * 60 * 1000);
+  setInterval(loadActivity, 3000);
 })();
 </script>
 </body>

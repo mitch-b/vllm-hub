@@ -409,6 +409,111 @@ def test_chat_reports_upstream_errors(api, monkeypatch):
     assert r.status_code == 502
 
 
+METRICS = """# HELP vllm:num_requests_running Number of requests in model execution batches.
+vllm:num_requests_running{{engine="0",model_name="m"}} {running}
+vllm:num_requests_waiting{{engine="0",model_name="m"}} 1.0
+vllm:kv_cache_usage_perc{{engine="0",model_name="m"}} 0.25
+vllm:prompt_tokens_total{{engine="0",model_name="m"}} {prompt}
+vllm:generation_tokens_total{{engine="0",model_name="m"}} {gen}
+vllm:request_success_total{{engine="0",finished_reason="stop",model_name="m"}} 3.0
+vllm:request_success_total{{engine="0",finished_reason="length",model_name="m"}} 1.0
+vllm:time_to_first_token_seconds_sum{{engine="0",model_name="m"}} 2.0
+vllm:time_to_first_token_seconds_count{{engine="0",model_name="m"}} 4.0
+vllm:prefix_cache_queries_total{{engine="0",model_name="m"}} 200.0
+vllm:prefix_cache_hits_total{{engine="0",model_name="m"}} 150.0
+"""
+ACCESS = b"""2026-10-31T16:00:01.000000000Z INFO:     172.27.0.2:1 - "GET /v1/models HTTP/1.1" 200 OK
+2026-10-31T16:00:02.000000000Z INFO:     172.27.0.1:2 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+2026-10-31T16:00:03.000000000Z INFO:     172.27.0.1:2 - "GET /metrics HTTP/1.1" 200 OK
+2026-10-31T16:00:04.000000000Z INFO:     172.27.0.2:3 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+2026-10-31T16:00:05.000000000Z INFO:     10.0.0.9:4 - "POST /v1/completions?x=1 HTTP/1.1" 400 Bad Request
+2026-10-31T16:00:05.500000000Z (APIServer pid=1) INFO Engine 000: Avg prompt throughput: 3.1 tokens/s
+"""
+
+
+@pytest.fixture
+def serving(api, monkeypatch):
+    from app import activity
+
+    activity.reset()
+    started = "2026-10-31T16:00:00.000000000Z"
+    c = SimpleNamespace(id="served", status="running", labels={"vllm-hub.model": "org/model"},
+                        attrs={"State": {"StartedAt": started}})
+    log_calls = []
+
+    def logs(**kw):
+        log_calls.append(kw)
+        return c.output
+
+    c.output, c.logs = ACCESS, logs
+    counters = {"running": 2.0, "prompt": 1000.0, "gen": 100.0}
+    monkeypatch.setattr(runner, "_container", lambda: c)
+    monkeypatch.setattr(activity.httpx, "get", lambda *a, **kw: SimpleNamespace(
+        raise_for_status=lambda: None, text=METRICS.format(**counters)))
+    monkeypatch.setattr(activity, "_gateways", lambda: {"172.27.0.1"})
+    monkeypatch.setattr(activity, "_own_ips", lambda: {"172.27.0.2"})
+    monkeypatch.setattr(activity.time, "time", lambda: runner._timestamp(started) + 20)
+    yield activity, c, counters, log_calls
+    activity.reset()
+
+
+def test_activity_is_empty_without_a_served_model(api):
+    from app import activity
+
+    activity.reset()
+    activity.sample()
+    assert api.get("/api/activity").json() == {"serving": False, "interval": activity.INTERVAL}
+
+
+def test_activity_reports_rates_callers_and_recent_requests(api, serving):
+    activity, c, counters, log_calls = serving
+    t0 = runner._timestamp(c.attrs["State"]["StartedAt"])
+    activity.sample(now=t0 + 10)
+    counters.update(prompt=1500.0, gen=150.0)
+    activity.sample(now=t0 + 15)
+    body = api.get("/api/activity").json()
+    assert body["serving"] is True
+    assert body["current"] == {"running": 2, "waiting": 1, "kv_cache": 0.25, "gen_tps": 10.0, "prompt_tps": 100.0}
+    assert body["totals"]["requests"] == 4 and body["totals"]["avg_ttft_s"] == 0.5
+    assert body["totals"]["prefix_cache_hit"] == 0.75
+    assert len(body["history"]) == 1
+    # Hub status polling and scrapes are ignored; each caller is labelled and counted once.
+    callers = {x["client"]: x for x in body["callers"]}
+    assert set(callers) == {"172.27.0.1", "172.27.0.2", "10.0.0.9"}
+    assert callers["172.27.0.1"]["label"] == "This computer" and callers["172.27.0.1"]["requests"] == 1
+    assert callers["172.27.0.2"]["label"] == "vLLM Hub"
+    assert callers["10.0.0.9"]["errors"] == 1 and callers["10.0.0.9"]["label"] is None
+    assert [r["path"] for r in body["recent"]] == ["/v1/completions", "/v1/chat/completions", "/v1/chat/completions"]
+    # The second read starts after the last log line, so the same requests are not counted twice.
+    assert log_calls[1]["since"] == pytest.approx(t0 + 5.5)
+
+
+def test_activity_resets_for_a_new_container_and_when_stopped(api, serving, monkeypatch):
+    activity, c, counters, _ = serving
+    t0 = runner._timestamp(c.attrs["State"]["StartedAt"])
+    activity.sample(now=t0 + 10)
+    activity.sample(now=t0 + 15)
+    assert api.get("/api/activity").json()["callers"]
+    c.id, c.output = "replacement", b""
+    activity.sample(now=t0 + 20)
+    body = api.get("/api/activity").json()
+    assert body["callers"] == [] and body["history"] == []
+    monkeypatch.setattr(runner, "_container", lambda: None)
+    activity.sample(now=t0 + 25)
+    assert api.get("/api/activity").json()["serving"] is False
+
+
+def test_activity_hides_a_loading_model(api, serving, monkeypatch):
+    activity, *_ = serving
+
+    def down(*a, **kw):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(activity.httpx, "get", down)
+    activity.sample()
+    assert api.get("/api/activity").json()["serving"] is False
+
+
 def test_every_ui_action_is_handled():
     acts = set(re.findall(r'data-act="([\w-]+)"', INDEX))
     handled = set(re.findall(r"case '([\w-]+)':", INDEX)) | {"conn-flag"}

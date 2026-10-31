@@ -9,13 +9,14 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import capacity, downloads, hf, profiles, runner, updates
+from . import activity, capacity, downloads, hf, profiles, runner, updates
 from .gpu import gpu_info
 
 
 @asynccontextmanager
 async def lifespan(_app):
     Thread(target=updates.warm, daemon=True).start()  # remember our image before any pull moves its tag
+    Thread(target=activity.loop, daemon=True).start()
     if updates.AUTO:
         Thread(target=updates.auto_loop, daemon=True).start()
     yield
@@ -123,6 +124,11 @@ def stop():
 @app.get("/api/logs")
 def logs():
     return StreamingResponse(runner.log_stream(), media_type="text/plain")
+
+
+@app.get("/api/activity")
+def get_activity():
+    return activity.snapshot()
 
 
 @app.post("/api/chat")

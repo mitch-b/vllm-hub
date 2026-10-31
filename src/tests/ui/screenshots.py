@@ -28,12 +28,21 @@ def fixture(name):
 
 
 def open_page(browser, overrides=None):
-    data = {n: fixture(n) for n in ("system", "models", "version", "recommended", "jobs", "search", "chat")}
+    data = {n: fixture(n) for n in ("system", "models", "version", "recommended", "jobs", "search", "chat", "activity")}
     data.update(overrides or {})
     shift = time.time() - CAPTURED
     for m in data["models"]:
         m["last_used"] += shift
     data["version"]["checked_at"] += shift
+    act = data["activity"]
+    if act.get("serving"):
+        act["now"] += shift
+        act["since"] += shift
+        for row in act["history"] + act["recent"]:
+            row["t"] += shift
+        for c in act["callers"]:
+            c["first_seen"] += shift
+            c["last_seen"] += shift
     startup = data["system"]["vllm"].get("startup")
     if startup:
         for key in ("started_at", "last_log_at"):
@@ -262,6 +271,23 @@ def console(b):
     return p
 
 
+def activity(b):
+    p = overview(b)
+    toggle(p, "activity")
+    p.wait_for_selector("#actBody svg.spark path.line")
+    text = p.locator("#actBody").inner_text()
+    assert "This computer" in text and "412 requests served" in text, text
+    # Only offered while serving: a starting model hides the toggle and the drawer.
+    p.evaluate("S.sys.vllm.ready = false; renderRuntime()")
+    assert p.locator('#rtMain [data-target="activity"]').count() == 0
+    assert p.locator("#activity").is_hidden()
+    p.evaluate("S.sys.vllm.ready = true; renderRuntime(); loadActivity()")
+    p.wait_for_selector("#activity", state="visible")
+    p.wait_for_selector("#actBody svg.spark path.line")
+    p.locator("#activity").scroll_into_view_if_needed()
+    return p
+
+
 def starting(b):
     system = fixture("system")
     system["vllm"].update(ready=False, served=None, startup=fixture("starting"))
@@ -446,7 +472,7 @@ def update(b):
 
 SCENES = {
     f.__name__.replace("_dialog", ""): f
-    for f in (overview, connect, playground, run_dialog, discover, downloading, downloading_run,
+    for f in (overview, connect, playground, activity, run_dialog, discover, downloading, downloading_run,
               download_finalizing, download_completion, console, starting, warming, capturing,
               cancelled_start, console_recovery, update)
 }
