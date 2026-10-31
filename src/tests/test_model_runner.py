@@ -74,6 +74,10 @@ def native(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "gpu_info", lambda: None)
     monkeypatch.setattr(downloads, "_jobs", {})
     monkeypatch.setattr(runner, "client", lambda: pytest.fail("Native inference must not manage CUDA containers"))
+    monkeypatch.setattr(model_runner.hf.api, "model_info", lambda repo, **kwargs: SimpleNamespace(
+        siblings=[SimpleNamespace(rfilename="model-Q4_K_M.gguf", size=2**30)], gated=False,
+        card_data={"base_model": "Qwen/original"},
+    ))
     state.api, state.model, state.conn = TestClient(main.app), model, conn
     return state
 
@@ -98,7 +102,9 @@ def test_native_models_recommendations_and_delete(native):
     assert model["size_gib"] == 0.45
     assert model["context_hint"] == 8192
     assert model["verdict"] == "unknown"
-    assert [m["id"] for m in native.api.get("/api/recommended").json()] == model_runner.RECOMMENDED
+    assert [m["id"] for m in native.api.get("/api/recommended").json()] == [
+        f"hf.co/{repo.lower()}:Q4_K_M" for repo in model_runner.RECOMMENDED
+    ]
     job = downloads.Job(model["id"])
     job.status = "done"
     downloads._jobs[job.id] = job
@@ -112,11 +118,12 @@ def test_native_search_returns_portable_gguf_references(native, monkeypatch):
 
     def search(**kwargs):
         calls.append(kwargs)
-        return [SimpleNamespace(id="fixture/coder-GGUF", downloads=10, likes=1, gated=False)]
+        return [SimpleNamespace(id="fixture/coder-GGUF", downloads=10, likes=1, gated=False,
+                                siblings=[SimpleNamespace(rfilename="coder-Q4_K_M.gguf")])]
 
     monkeypatch.setattr(model_runner.hf.api, "list_models", search)
     rows = native.api.get("/api/search?q=coder").json()
-    assert rows[0]["id"] == "hf.co/fixture/coder-GGUF:Q4_K_M"
+    assert rows[0]["id"] == "hf.co/fixture/coder-gguf:Q4_K_M"
     assert calls[0]["filter"] == "gguf"
 
 
@@ -210,11 +217,62 @@ def test_native_pull_progress_completion_cancel_and_error(native, monkeypatch):
     assert native.api.post("/api/pull", json={"repo_id": job.repo_id}).json()["status"] == "error"
 
 
-def test_native_catalog_errors_are_explicit(native):
+def test_native_catalog_errors_are_explicit(native, monkeypatch):
     native.fail = "/models"
     assert native.api.get("/api/models").status_code == 502
-    native.fail = "/models/" + model_runner.RECOMMENDED[0]
-    assert native.api.get("/api/recommended").status_code == 502
+    def invalid(repo, **kwargs):
+        raise ValueError("Publisher unavailable")
+
+    monkeypatch.setattr(model_runner.hf.api, "model_info", invalid)
+    rows = native.api.get("/api/recommended").json()
+    assert all(row["verdict"] == "unsupported" and "Publisher unavailable" in row["reason"] for row in rows)
+
+
+def test_native_curated_sources_sizes_and_partial_catalog_failure(native, monkeypatch):
+    def info(repo, **kwargs):
+        if repo == "Qwen/Qwen3-14B-GGUF":
+            raise ValueError("Model metadata unavailable")
+        return SimpleNamespace(gated=False, card_data={"base_model": "Qwen/original"}, siblings=[
+            SimpleNamespace(rfilename="model-Q4_K_M.gguf", size=2**30),
+            SimpleNamespace(rfilename="model-Q4_K_M-00001-of-00002.gguf", size=2**29),
+            SimpleNamespace(rfilename="model-Q4_K_M-00002-of-00002.gguf", size=2**29),
+            SimpleNamespace(rfilename="model-Q8_0.gguf", size=2**31),
+        ])
+
+    monkeypatch.setattr(model_runner.hf.api, "model_info", info)
+    rows = native.api.get("/api/recommended").json()
+    assert len(rows) == 6
+    assert rows[0]["source_label"] == "Official publisher"
+    assert rows[1]["source_label"] == "Established GGUF converter"
+    assert rows[0]["source_model"] == "Qwen/original"
+    assert rows[0]["size_gib"] == 1
+    assert len([row for row in rows if row["verdict"] == "unsupported"]) == 1
+
+
+def test_native_search_prioritizes_publishers_without_hiding_labeled_community_results(native, monkeypatch):
+    def model(repo, file="model-Q4_K_M.gguf"):
+        return SimpleNamespace(id=repo, downloads=1, likes=0, gated=False,
+                               siblings=[SimpleNamespace(rfilename=file)])
+
+    monkeypatch.setattr(model_runner.hf.api, "list_models", lambda **kwargs: [
+        model("fixture/community"), model("unsloth/conversion"), model("Qwen/official"),
+        model("fixture/no-q4", "model-Q8_0.gguf"),
+    ])
+    rows = native.api.get("/api/search?q=qwen").json()
+    assert [row["publisher"] for row in rows] == ["Qwen", "unsloth", "fixture"]
+    assert rows[-1]["source_label"] == "Community upload"
+
+
+def test_native_hugging_face_canonical_registration_and_reference_reconciliation(native):
+    native.model["tags"] = ["huggingface.co/qwen/qwen3-0.6b-gguf:Q4_K_M"]
+    job = downloads.Job(model_runner._reference("hf.co/Qwen/Qwen3-0.6B-GGUF:Q4_K_M"))
+    model_runner._pull(job)
+    assert job.status == "done"
+    assert model_runner.models()[0]["id"] == job.repo_id
+    assert model_runner.start(native.model["tags"][0])["model"] == job.repo_id
+    assert model_runner.selected_model() == job.repo_id
+    assert model_runner.delete("hf.co/Qwen/Qwen3-0.6B-GGUF:Q4_K_M")
+    assert model_runner.selected_model() is None
 
 
 @pytest.mark.parametrize("escaped", [False, True])
@@ -352,6 +410,7 @@ def test_cuda_remains_default_for_nvidia_and_native_selection_is_sticky(native, 
 
 
 def test_gpu_probe_uses_own_image_and_caches_unavailable_devices(monkeypatch):
+    monkeypatch.setattr(gpu.time, "monotonic", lambda: 1.0)
     calls = []
     removed = []
 
@@ -384,6 +443,7 @@ def test_gpu_probe_uses_own_image_and_caches_unavailable_devices(monkeypatch):
 
 
 def test_gpu_probe_cleans_up_after_cdi_start_failure_and_caches_failure(monkeypatch):
+    monkeypatch.setattr(gpu.time, "monotonic", lambda: 1.0)
     removed, created = [], []
 
     def fail():
@@ -404,6 +464,7 @@ def test_gpu_probe_cleans_up_after_cdi_start_failure_and_caches_failure(monkeypa
 
 
 def test_model_runner_auto_discovery_socket_fallback_and_cache(monkeypatch):
+    monkeypatch.setattr(model_runner.time, "monotonic", lambda: 1.0)
     original = model_runner.discover
     calls = []
     monkeypatch.setattr(model_runner, "_discovery", {"at": 0.0, "connection": None, "error": None})

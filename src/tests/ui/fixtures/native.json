@@ -20,7 +20,7 @@
     {"id": "ai/qwen3:8B-Q4_K_M", "size_gib": 4.68, "last_used": 0, "context_hint": 8192, "max_context": 32768}
   ],
   "recommended": [
-    {"id": "ai/qwen3:0.6B-Q4_K_M", "size_gib": 0.45, "quant": "GGUF Q4_K_M", "verdict": "unknown", "reason": "Model Runner selects the native engine and manages host memory."},
-    {"id": "ai/qwen3:8B-Q4_K_M", "size_gib": 4.68, "quant": "GGUF Q4_K_M", "verdict": "unknown", "reason": "Model Runner selects the native engine and manages host memory."}
+    {"id": "hf.co/qwen/qwen3-8b-gguf:Q4_K_M", "size_gib": 4.68, "quant": "GGUF Q4_K_M", "verdict": "unknown", "publisher": "Qwen", "source_kind": "official", "source_label": "Official publisher", "source_model": ["Qwen/Qwen3-8B"], "use_case": "General chat · established baseline", "reason": "Leave memory for macOS and context. No host-memory fit is claimed."},
+    {"id": "hf.co/unsloth/qwen3.5-9b-gguf:Q4_K_M", "size_gib": 5.29, "quant": "GGUF Q4_K_M", "verdict": "unknown", "publisher": "unsloth", "source_kind": "converter", "source_label": "Established GGUF converter", "source_model": "Qwen/Qwen3.5-9B", "use_case": "General chat and coding · recent engine required", "reason": "A converter is not the original model author."}
   ]
 }

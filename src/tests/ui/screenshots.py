@@ -587,6 +587,37 @@ def macos_mobile(b):
     return p
 
 
+def native_discover(b):
+    data = fixture("native")
+    search = [
+        {**data["recommended"][0], "source_kind": "official"},
+        {**data["recommended"][1], "source_kind": "converter"},
+        {"id": "hf.co/fixture/custom-GGUF:Q4_K_M", "source_kind": "community",
+         "publisher": "fixture", "source_label": "Community upload", "verdict": "unknown"},
+    ]
+    p = open_page(b, {**data, "jobs": [], "search": search})
+    p.click("#tab-discover")
+    p.wait_for_selector('#discover [data-act="run"]')
+    assert "Official publisher" in p.locator("#discover").inner_text()
+    assert "Established GGUF converter" in p.locator("#discover").inner_text()
+    assert "recent engine required" in p.locator("#discover").inner_text()
+    assert "weights" in p.locator("#discover").inner_text()
+    assert "hf.co/" in p.locator("#q").get_attribute("placeholder")
+    p.locator('#discover [data-act="expand"]').first.click()
+    assert "Qwen/Qwen3-8B" in p.locator("#discover .details").inner_text()
+    assert "4.68 GiB" in p.locator("#discover .details").inner_text()
+    assert p.locator('#discover a').first.get_attribute("href") == "https://huggingface.co/qwen/qwen3-8b-gguf"
+    p.fill("#q", "qwen")
+    p.wait_for_function("S.results && !S.searching")
+    assert "Community upload" not in p.locator("#discover").inner_text()
+    p.check("#showAll")
+    assert "Community upload" in p.locator("#discover").inner_text()
+    p.uncheck("#showAll")
+    p.fill("#q", "")
+    p.wait_for_function("S.query === ''")
+    return p
+
+
 def macos_start_failed(b):
     data = fixture("native")
     data["system"]["vllm"].update(
@@ -641,7 +672,7 @@ SCENES = {
     f.__name__.replace("_dialog", ""): f
     for f in (overview, connect, playground, activity, run_dialog, discover, downloading, downloading_run,
               download_finalizing, download_completion, console, starting, warming, capturing,
-              cancelled_start, console_recovery, update, macos, macos_mobile, macos_start_failed,
+              cancelled_start, console_recovery, update, macos, macos_mobile, native_discover, macos_start_failed,
               macos_connection_lost, no_gpu, no_docker)
 }
 
