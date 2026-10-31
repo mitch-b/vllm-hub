@@ -12,7 +12,7 @@ pytest -q
 node tests/check_ui.mjs
 ```
 
-The PR check **CI passed** must be green to merge. It runs the above, actionlint, hadolint, `docker compose config`, an image build and a smoke test of the API. Merges to `main` re-run CI, then publish `ghcr.io/mitch-b/vllm-hub` (`latest`, `sha-*`, and semver tags for `v*.*.*`).
+The PR check **CI passed** must be green to merge. It runs the above, actionlint, hadolint, `docker compose config`, an image build and a smoke test of the API. Merges to `main` re-run CI, then publish `ghcr.io/mitch-b/vllm-hub` (`latest`, a US Central build-time tag like `20261031-1042`, `sha-*`, and semver for `v*.*.*`).
 
 ## Rules
 

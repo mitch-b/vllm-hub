@@ -16,6 +16,8 @@ from .gpu import gpu_info
 @asynccontextmanager
 async def lifespan(_app):
     Thread(target=updates.warm, daemon=True).start()  # remember our image before any pull moves its tag
+    if updates.AUTO:
+        Thread(target=updates.auto_loop, daemon=True).start()
     yield
 
 

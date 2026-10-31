@@ -14,6 +14,7 @@ services:
       VLLM_IMAGE: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
       VLLM_PORT: ${VLLM_PORT:-8000}
       HUB_UPDATE_CHECK: ${HUB_UPDATE_CHECK:-true}
+      HUB_AUTO_UPDATE: ${HUB_AUTO_UPDATE:-false}
     volumes:
       - ${HF_CACHE_SOURCE:-vllm-hub-hf-cache}:/cache
       - /var/run/docker.sock:/var/run/docker.sock
