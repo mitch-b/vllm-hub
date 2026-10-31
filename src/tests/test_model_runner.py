@@ -249,7 +249,7 @@ def test_native_curated_sources_sizes_and_partial_catalog_failure(native, monkey
     assert len([row for row in rows if row["verdict"] == "unsupported"]) == 1
 
 
-def test_native_search_prioritizes_publishers_without_hiding_labeled_community_results(native, monkeypatch):
+def test_native_search_preserves_catalog_order_and_labels_sources(native, monkeypatch):
     def model(repo, file="model-Q4_K_M.gguf"):
         return SimpleNamespace(id=repo, downloads=1, likes=0, gated=False,
                                siblings=[SimpleNamespace(rfilename=file)])
@@ -259,8 +259,8 @@ def test_native_search_prioritizes_publishers_without_hiding_labeled_community_r
         model("fixture/no-q4", "model-Q8_0.gguf"),
     ])
     rows = native.api.get("/api/search?q=qwen").json()
-    assert [row["publisher"] for row in rows] == ["Qwen", "unsloth", "fixture"]
-    assert rows[-1]["source_label"] == "Community upload"
+    assert [row["publisher"] for row in rows] == ["fixture", "unsloth", "Qwen"]
+    assert rows[0]["source_label"] == "Community upload"
 
 
 def test_native_hugging_face_canonical_registration_and_reference_reconciliation(native):
