@@ -1,0 +1,89 @@
+name: UI screenshots
+
+# Publishes Playwright screenshots to the orphan `ui-screenshots` branch (never main):
+#   - PRs: CI's `ui` job renders them unprivileged; this posts them as a sticky PR comment.
+#   - main: re-renders README images after UI changes merge.
+#   - weekly: prunes screenshots of closed PRs and re-squashes the branch to one commit.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  push:
+    branches: [main]
+    paths: ['src/app/static/**', 'src/tests/ui/**']
+  schedule:
+    - cron: '17 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      task:
+        type: choice
+        options: [main, prune]
+        default: main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ui-screenshots-branch
+  cancel-in-progress: false
+
+jobs:
+  pr:
+    name: Comment PR screenshots
+    # Runs with write access, so it never checks out or executes PR code; it only copies PNGs.
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+      - run: bash .github/scripts/ui-screenshots.sh pr "${{ github.event.workflow_run.id }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+
+  main:
+    name: Publish README screenshots
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.task == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container: mcr.microsoft.com/playwright/python:v1.49.0-noble
+    steps:
+      - uses: actions/checkout@v4
+      - name: Capture
+        working-directory: src
+        run: |
+          pip install -q -r tests/ui/requirements.txt
+          python tests/ui/screenshots.py --out "$RUNNER_TEMP/shots"
+      - name: Install gh
+        run: |
+          command -v gh >/dev/null || { apt-get update -qq && apt-get install -y -qq gh jq >/dev/null; }
+          git config --global --add safe.directory '*'
+      - run: bash .github/scripts/ui-screenshots.sh main "$RUNNER_TEMP/shots"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+
+  prune:
+    name: Prune closed PRs
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.task == 'prune')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+      - run: bash .github/scripts/ui-screenshots.sh prune 7
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}

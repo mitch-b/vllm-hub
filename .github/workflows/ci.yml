@@ -47,6 +47,61 @@ jobs:
         working-directory: .
         run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 -color
 
+      - name: No images on main
+        working-directory: .
+        run: |
+          # Screenshots live on the ui-screenshots branch; keep binary noise out of main.
+          files=$(git ls-files '*.png' '*.jpg' '*.jpeg' '*.gif' '*.webp')
+          [ -z "$files" ] || { echo "::error::Images belong on the ui-screenshots branch, not main:"; echo "$files"; exit 1; }
+
+  changes:
+    name: Detect UI changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      ui: ${{ steps.filter.outputs.ui }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            ui:
+              - 'src/app/static/**'
+              - 'src/tests/ui/**'
+
+  ui:
+    name: UI screenshots
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container: mcr.microsoft.com/playwright/python:v1.49.0-noble
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Capture
+        run: |
+          pip install -q -r tests/ui/requirements.txt
+          python tests/ui/screenshots.py --out "$GITHUB_WORKSPACE/shots"
+
+      - name: Record PR
+        working-directory: .
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 -c "import json,os; print(json.dumps({'pr': int(os.environ['PR']), 'sha': os.environ['SHA']}))" > shots/pr.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-screenshots
+          path: shots/
+          retention-days: 7
+
   image:
     name: Image build and smoke test
     runs-on: ubuntu-latest
@@ -92,7 +147,7 @@ jobs:
   ci-ok:
     name: CI passed
     if: always()
-    needs: [test, image]
+    needs: [test, image, changes, ui]
     runs-on: ubuntu-latest
     timeout-minutes: 1
     steps:
@@ -100,3 +155,6 @@ jobs:
         working-directory: .
         run: |
           [ "${{ needs.test.result }}" = success ] && [ "${{ needs.image.result }}" = success ] || exit 1
+          # UI screenshots are required when the UI changed, skipped otherwise.
+          case "${{ needs.ui.result }}" in success|skipped) ;; *) exit 1 ;; esac
+          case "${{ needs.changes.result }}" in success|skipped) ;; *) exit 1 ;; esac

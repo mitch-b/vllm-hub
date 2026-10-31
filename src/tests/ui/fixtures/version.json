@@ -1,0 +1,30 @@
+{
+  "image": "ghcr.io/mitch-b/vllm-hub:latest",
+  "check_enabled": true,
+  "auto_update": true,
+  "local": {
+    "container": "vllm-hub-hub-1",
+    "image": "ghcr.io/mitch-b/vllm-hub:latest",
+    "digests": [
+      "sha256:4c6a546305bf79fdb4c26ff8272c1798092ca42c07eaf441e334e2cb2d527c23"
+    ],
+    "arch": "amd64",
+    "version": "20261031-1052",
+    "revision": "d0c2a656addb14368605bfb49a64017ca83fa355",
+    "created": "2026-10-31T15:52:22.912Z"
+  },
+  "managed": true,
+  "remote": {
+    "digest": "sha256:4c6a546305bf79fdb4c26ff8272c1798092ca42c07eaf441e334e2cb2d527c23",
+    "version": "20261031-1052",
+    "revision": "d0c2a656addb14368605bfb49a64017ca83fa355",
+    "created": "2026-10-31T15:52:22.912Z"
+  },
+  "error": null,
+  "update_available": false,
+  "state": {
+    "status": "idle",
+    "error": null
+  },
+  "checked_at": 1793462900
+}

@@ -1,0 +1,25 @@
+INFO:     172.27.0.2:53248 - "GET /v1/models HTTP/1.1" 200 OK
+INFO:     172.27.0.2:53260 - "GET /v1/models HTTP/1.1" 200 OK
+INFO:     172.27.0.2:53270 - "GET /v1/models HTTP/1.1" 200 OK
+INFO:     172.27.0.2:44042 - "GET /v1/models HTTP/1.1" 200 OK
+INFO:     172.27.0.2:44050 - "GET /v1/models HTTP/1.1" 200 OK
+INFO:     172.27.0.2:44060 - "GET /v1/models HTTP/1.1" 200 OK
+INFO:     172.27.0.2:44062 - "GET /v1/models HTTP/1.1" 200 OK
+INFO:     172.27.0.2:44074 - "GET /v1/models HTTP/1.1" 200 OK
+(APIServer pid=1) INFO 10-31 16:09:07 [loggers.py:320] Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 0.0 tokens/s, Running: 0 reqs, Waiting: 0 reqs, GPU KV cache usage: 0.0%, Prefix cache hit rate: 48.7%
+INFO:     172.27.0.2:44086 - "GET /v1/models HTTP/1.1" 200 OK
+INFO:     172.27.0.2:44096 - "GET /v1/models HTTP/1.1" 200 OK
+INFO:     172.27.0.2:40902 - "GET /v1/models HTTP/1.1" 200 OK
+INFO:     172.27.0.2:40910 - "GET /v1/models HTTP/1.1" 200 OK
+INFO:     172.27.0.2:40922 - "GET /v1/models HTTP/1.1" 200 OK
+INFO:     172.27.0.2:40932 - "GET /v1/models HTTP/1.1" 200 OK
+INFO:     172.27.0.2:40940 - "GET /v1/models HTTP/1.1" 200 OK
+INFO:     172.27.0.2:40952 - "GET /v1/models HTTP/1.1" 200 OK
+INFO:     172.27.0.2:40956 - "GET /v1/models HTTP/1.1" 200 OK
+INFO:     172.27.0.2:48864 - "GET /v1/models HTTP/1.1" 200 OK
+INFO:     172.27.0.2:48878 - "GET /v1/models HTTP/1.1" 200 OK
+INFO:     172.27.0.2:48880 - "GET /v1/models HTTP/1.1" 200 OK
+INFO:     172.27.0.2:48892 - "GET /v1/models HTTP/1.1" 200 OK
+INFO:     172.27.0.2:48898 - "GET /v1/models HTTP/1.1" 200 OK
+INFO:     172.27.0.2:51520 - "GET /v1/models HTTP/1.1" 200 OK
+INFO:     172.27.0.2:51534 - "GET /v1/models HTTP/1.1" 200 OK
