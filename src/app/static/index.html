@@ -766,13 +766,14 @@ function renderAll() { renderGpu(); renderRuntime(); renderLibrary(); renderDisc
 /* ---------- Data ---------- */
 async function refreshSystem() {
   try {
-    const before = phase(), model = V().model;
+    const before = phase();
     S.sys = await api('/api/system');
     S.sysAt = Date.now();
     const now = phase();
     if (before === 'loading' && now === 'ready') toast('Model is ready', servedName(), 'ok');
     if (before === 'loading' && now === 'exited') { toast('vLLM stopped while starting', 'Opened the console so you can see why.', 'bad', 8000); S.open.add('console'); }
-    if ((now === 'loading' || now === 'ready' || now === 'exited') && (S.logsFor !== V().model || model !== V().model)) streamLogs();
+    if (['loading', 'ready', 'exited'].includes(now) && (S.logsFor !== logKey() || !logAbort)) streamLogs();
+    if (now === 'idle') { logAbort?.abort(); logAbort = null; S.logsFor = null; }
   } catch { S.sys = S.sys || { vllm: { docker_ok: false } }; }
   renderAll();
 }
@@ -878,27 +879,31 @@ function onQuery() {
 
 /* ---------- Actions ---------- */
 async function pull(id, runOpts = null) {
+  const seq = stopSeq;
   try {
     const j = await post('/api/pull', { repo_id: id });
     S.prevJob[j.id] = j.status;
-    if (runOpts) S.runAfter[j.id] = runOpts;
-    toast(runOpts ? 'Downloading, will run when done' : 'Download started', id, 'info', 2600);
+    const willRun = runOpts && seq === stopSeq;
+    if (willRun) S.runAfter[j.id] = runOpts;
+    toast(willRun ? 'Downloading, will run when done' : 'Download started', id, 'info', 2600);
     S.tab = 'library'; store.set('tab', 'library');
     await refreshJobs(); renderTabs();
   } catch (e) { toast('Could not start download', e.message, 'bad'); }
 }
 
+let runSeq = 0, stopSeq = 0;
 async function startModel({ id, context, graphs, util, w }) {
+  const seq = ++runSeq;
   try {
     if (context) store.set('ctx.' + id, context); else localStorage.removeItem('hub.ctx.' + id);
     store.set('opts.' + id, { graphs, util });
-    S.sys.vllm = { ...V(), state: 'created', ready: false, model: id, context: context || '', startup: null };
+    S.sys.vllm = { ...V(), state: 'created', ready: false, model: id, context: context || '', startup: null, container_id: null };
     renderAll();
     const r = await post('/api/run', { repo_id: id, context: context || null, graphs, util: util || null, weights_gib: w || null });
+    if (seq !== runSeq) return;
     store.set('last', { id, context: r.context, graphs, util, w });
-    $('#logs').textContent = ''; streamLogs();
     refreshSystem(); loadLocal();
-  } catch (e) { toast('Could not start vLLM', e.message, 'bad', 8000); refreshSystem(); }
+  } catch (e) { if (seq === runSeq) { toast('Could not start vLLM', e.message, 'bad', 8000); refreshSystem(); } }
 }
 
 const CTX_OPTS = [0, 8192, 16384, 32768, 65536, 131072];
@@ -936,6 +941,10 @@ function openRunDialog(id, w) {
 }
 
 async function stopModel() {
+  ++runSeq;
+  ++stopSeq;
+  S.runAfter = {};
+  renderLibrary();
   try { await post('/api/stop'); toast('Stopped', split(V().model || '')[1], 'info', 2000); } catch (e) { toast('Could not stop', e.message, 'bad'); }
   S.open.delete('playground'); S.open.delete('connect');
   refreshSystem();
@@ -949,22 +958,32 @@ async function deleteModel(id) {
 
 /* ---------- Logs ---------- */
 let logAbort = null;
+const logKey = () => [V().container_id || V().model, V().startup?.started_at || ''].join('|');
 async function streamLogs() {
   logAbort?.abort();
-  logAbort = new AbortController();
-  S.logsFor = V().model;
+  const controller = logAbort = new AbortController();
+  S.logsFor = logKey();
   const el = $('#logs');
-  el.textContent = '';
+  el.textContent = 'Connecting to vLLM console...\n';
+  let received = false;
   try {
-    const r = await fetch('/api/logs', { signal: logAbort.signal });
+    const r = await fetch('/api/logs', { signal: controller.signal });
+    if (!r.ok) throw new Error(`Console request failed (${r.status})`);
     const reader = r.body.getReader(), dec = new TextDecoder();
     for (;;) {
       const { value, done } = await reader.read(); if (done) break;
+      if (controller.signal.aborted) return;
+      if (!received) { el.textContent = ''; received = true; }
       el.textContent += stripAnsi(dec.decode(value, { stream: true }));
       if (el.textContent.length > 80000) el.textContent = el.textContent.slice(-60000);
       if ($('#follow').checked) el.scrollTop = el.scrollHeight;
     }
-  } catch { /* aborted */ }
+    if (!received && !controller.signal.aborted) el.textContent = 'No console output yet. Reconnecting on the next status refresh.\n';
+  } catch (e) {
+    if (!controller.signal.aborted) el.textContent += `\nConsole disconnected: ${e.message}. Reconnecting on the next status refresh.\n`;
+  } finally {
+    if (logAbort === controller) logAbort = null;
+  }
 }
 
 /* ---------- Playground ---------- */
@@ -1001,7 +1020,7 @@ document.addEventListener('click', e => {
   switch (act) {
     case 'tab': S.tab = b.dataset.tab; store.set('tab', S.tab); renderTabs(); if (S.tab === 'discover') { renderDiscover(); setTimeout(() => $('#q').focus(), 0); } break;
     case 'toggle': S.open.has(target) ? S.open.delete(target) : S.open.add(target); renderRuntime();
-      if (S.open.has(target)) { if (target === 'playground') { renderChat(); $('#prompt').focus(); } if (target === 'console') { const l = $('#logs'); l.scrollTop = l.scrollHeight; } } break;
+      if (S.open.has(target)) { if (target === 'playground') { renderChat(); $('#prompt').focus(); } if (target === 'console') { if (!logAbort) streamLogs(); const l = $('#logs'); l.scrollTop = l.scrollHeight; } } break;
     case 'copy': copy(b.dataset.from ? $('#' + b.dataset.from).textContent : b.dataset.text); break;
     case 'conn': conn[b.dataset.k] = b.dataset.v; saveConn(); renderSnippets(); break;
     case 'update-open': openUpdate(); break;
@@ -1013,7 +1032,7 @@ document.addEventListener('click', e => {
     case 'dismiss-rt': post('/api/stop').then(refreshSystem); break;
     case 'run': openRunDialog(id, +b.dataset.w || null); break;
     case 'pull': pull(id); break;
-    case 'cancel-job': post(`/api/jobs/${b.dataset.job}/cancel`).then(refreshJobs).catch(err => toast('Cancel failed', err.message, 'bad')); break;
+    case 'cancel-job': delete S.runAfter[b.dataset.job]; post(`/api/jobs/${b.dataset.job}/cancel`).then(refreshJobs).catch(err => toast('Cancel failed', err.message, 'bad')); break;
     case 'dismiss-job': S.dismissed.add(b.dataset.job); renderLibrary(); break;
     case 'expand': S.expanded.has(id) ? S.expanded.delete(id) : S.expanded.add(id); renderDiscover(); break;
     case 'menu-local': { const m = S.local.find(x => x.id === id);

@@ -5,6 +5,7 @@ import os
 import re
 import time
 from datetime import datetime
+from threading import Event, RLock
 
 import docker
 import httpx
@@ -23,6 +24,12 @@ CACHE_SOURCE = os.getenv("HF_CACHE_SOURCE", "vllm-hub-hf-cache")
 BASE_URL = os.getenv("VLLM_BASE_URL", f"http://{CONTAINER}:8000")
 
 _client: docker.DockerClient | None = None
+_lifecycle_lock = RLock()
+_start_cancel: Event | None = None
+
+
+class StartCancelled(RuntimeError):
+    pass
 
 
 def client() -> docker.DockerClient:
@@ -145,6 +152,7 @@ def status() -> dict:
             pass
     return {
         "docker_ok": True, "state": state, "model": model, "ready": ready, "served": served,
+        "container_id": c.id,
         "port": HOST_PORT, "context": c.labels.get("vllm-hub.context"), "kv_tokens": kv,
         "url": f"http://localhost:{HOST_PORT}/v1",
         "startup": _startup(c) if not ready and state in ("running", "created", "restarting") else None,
@@ -152,24 +160,33 @@ def status() -> dict:
 
 
 def stop() -> None:
-    c = _container()
-    if c is not None:
-        c.remove(force=True)
+    with _lifecycle_lock:
+        if _start_cancel is not None:
+            _start_cancel.set()
+        c = _container()
+        if c is not None:
+            c.remove(force=True)
 
 
-def _wait_vram_free(timeout: float = 20) -> None:
+def _wait_vram_free(cancel: Event, timeout: float = 20) -> None:
     deadline = time.time() + timeout
     while time.time() < deadline:
+        if cancel.is_set():
+            raise StartCancelled("Model start cancelled")
         g = gpu_info()
         if not g or g["used_mib"] < 0.25 * g["total_mib"]:
             return
-        time.sleep(1)
+        if cancel.wait(1):
+            raise StartCancelled("Model start cancelled")
 
 
 def start(model_id: str, context: int | None = None, util: float | None = None,
           graphs: bool = False, extra: list[str] | None = None, weights_gib: float | None = None) -> dict:
-    stop()
-    _wait_vram_free()
+    global _start_cancel
+    with _lifecycle_lock:
+        stop()
+        cancel = _start_cancel = Event()
+    _wait_vram_free(cancel)
     g = gpu_info()
     if util is None:
         util = profiles.choose_util(g["total_mib"], g["used_mib"]) if g else 0.85
@@ -178,19 +195,22 @@ def start(model_id: str, context: int | None = None, util: float | None = None,
         context = capacity.auto_context(model_id, util) or profiles.choose_context(weights_gib, total_gib, util)
     args = profiles.build_vllm_args(model_id, context, util, graphs=graphs, extra=extra)
 
-    _ensure_network()
     env = {}
     if os.getenv("HF_TOKEN"):
         env["HF_TOKEN"] = os.environ["HF_TOKEN"]
-    client().containers.run(
-        IMAGE, args, name=CONTAINER, detach=True, ipc_mode="host",
-        restart_policy={"Name": "unless-stopped"},  # comes back with Docker after a reboot
-        device_requests=[DeviceRequest(count=-1, capabilities=[["gpu"]])],
-        ports={"8000/tcp": HOST_PORT}, network=NETWORK, environment=env,
-        volumes={CACHE_SOURCE: {"bind": "/root/.cache/huggingface", "mode": "rw"}},
-        labels={"vllm-hub.model": model_id, "vllm-hub.context": str(context), "vllm-hub.util": f"{util:.2f}",
-                "vllm-hub.managed": "true"},
-    )
+    with _lifecycle_lock:
+        if cancel.is_set():
+            raise StartCancelled("Model start cancelled")
+        _ensure_network()
+        client().containers.run(
+            IMAGE, args, name=CONTAINER, detach=True, ipc_mode="host",
+            restart_policy={"Name": "unless-stopped"},  # comes back with Docker after a reboot
+            device_requests=[DeviceRequest(count=-1, capabilities=[["gpu"]])],
+            ports={"8000/tcp": HOST_PORT}, network=NETWORK, environment=env,
+            volumes={CACHE_SOURCE: {"bind": "/root/.cache/huggingface", "mode": "rw"}},
+            labels={"vllm-hub.model": model_id, "vllm-hub.context": str(context), "vllm-hub.util": f"{util:.2f}",
+                    "vllm-hub.managed": "true"},
+        )
     return {"model": model_id, "context": context, "util": util, "args": args}
 
 

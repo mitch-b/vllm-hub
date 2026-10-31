@@ -92,7 +92,11 @@ Agentic use needs tool calling (enabled automatically) and a large context, beca
 
 The first time a model runs, the hub reads vLLM's measured KV-cache size from its logs and saves it in the `vllm-hub-state` volume. From then on, **Auto** context uses about 97% of that measured capacity (capped at the model's own limit) instead of a conservative estimate. Run a model, then stop and run it again with Auto to use it. For example, a 27B AWQ model on a 24 GB card goes from 32K to about 56K. If you need more context, choose a smaller model: less VRAM for weights means more for context.
 
-A running model restarts with Docker (`unless-stopped`); **Stop** removes it so it stays off.
+A running model restarts with Docker (`unless-stopped`); **Stop** or **Cancel** removes it
+and cancels any pending startup so it stays off until you choose **Run** again.
+Stopping also clears queued **Download & run** actions without stopping the downloads.
+The Console reconnects after a dropped stream or replacement container and reports
+connection errors instead of leaving an empty panel.
 
 ### Startup feedback
 

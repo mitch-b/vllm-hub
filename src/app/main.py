@@ -108,6 +108,8 @@ def cancel_job(job_id: str):
 def run(req: RunRequest):
     try:
         return runner.start(req.repo_id, req.context, req.util, req.graphs, req.extra, req.weights_gib)
+    except runner.StartCancelled as exc:
+        raise HTTPException(409, str(exc)) from exc
     except Exception as exc:
         raise HTTPException(500, f"Could not start vLLM: {exc}") from exc
 

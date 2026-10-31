@@ -335,6 +335,99 @@ def capturing(b):
     return p
 
 
+def cancelled_start(b):
+    p = starting(b)
+    system = fixture("system")
+    system["vllm"] = {"docker_ok": True, "state": "stopped", "model": None, "ready": False}
+    p.route(f"{BASE}/api/system", lambda r: r.fulfill(
+        content_type="application/json", body=json.dumps(system)))
+    p.route(f"{BASE}/api/stop", lambda r: r.fulfill(
+        content_type="application/json", body='{"ok":true}'))
+    p.evaluate("""() => {
+        const original = window.fetch;
+        window.runCalls = 0;
+        window.fetch = (url, opts) => {
+            if (url === '/api/run') {
+                ++window.runCalls;
+                return new Promise(resolve => {
+                    window.finishRun = () => resolve(new Response('{"context":8192}'));
+                });
+            }
+            return original(url, opts);
+        };
+        localStorage.removeItem('hub.last');
+        S.runAfter.download1 = {id:'fixture/queued-model', context:8192};
+        window.pendingRun = startModel({id:'fixture/loading-model', context:8192});
+    }""")
+    p.locator('#rtMain [data-act="stop"]').click()
+    p.wait_for_function("phase() === 'idle'")
+    assert p.evaluate("Object.keys(S.runAfter).length") == 0
+    p.evaluate("finishRun(); pendingRun")
+    assert p.evaluate("store.get('last', null)") is None
+    assert p.evaluate("window.runCalls") == 1
+    assert "Could not start vLLM" not in p.locator("#toasts").inner_text()
+    job = dict(fixture("downloading")[0], status="done", percent=100, finalizing=False)
+    models = fixture("models") + [{"id": job["repo_id"], "size_gib": 16.9, "last_used": CAPTURED}]
+    p.route(f"{BASE}/api/jobs", lambda r: r.fulfill(
+        content_type="application/json", body=json.dumps([job])))
+    p.route(f"{BASE}/api/models", lambda r: r.fulfill(
+        content_type="application/json", body=json.dumps(models)))
+    p.evaluate("refreshJobs()")
+    assert p.evaluate("window.runCalls") == 1
+    assert p.locator("#rtMain").inner_text().startswith("No model running")
+    return p
+
+
+def console_recovery(b):
+    p = starting(b)
+    toggle(p, "console")
+    p.wait_for_function("document.querySelector('#logs').textContent.includes('INFO')")
+    responses = ["empty", "error", "recovered"]
+    calls = []
+
+    def logs(route):
+        response = responses.pop(0) if responses else "recovered"
+        calls.append(response)
+        route.fulfill(
+            status=503 if response == "error" else 200, content_type="text/plain",
+            body="" if response == "empty" else "Logging unavailable" if response == "error"
+            else "INFO Loading weights: 1/4\n",
+        )
+
+    p.route(f"{BASE}/api/logs", logs)
+    p.evaluate("streamLogs()")
+    assert "No console output yet" in p.locator("#logs").inner_text()
+    p.evaluate("refreshSystem()")
+    p.wait_for_function("document.querySelector('#logs').textContent.includes('Console disconnected')")
+    assert "503" in p.locator("#logs").inner_text()
+    p.evaluate("refreshSystem()")
+    p.wait_for_function("document.querySelector('#logs').textContent.includes('Loading weights: 1/4')")
+    assert calls[:3] == ["empty", "error", "recovered"]
+    # A same-model replacement must abort the old stream and attach to the new container.
+    p.evaluate("""() => {
+        const original = window.fetch;
+        window.fetch = (url, opts) => url === '/api/logs'
+            ? Promise.resolve(new Response(new ReadableStream({
+                start(controller) {
+                    opts.signal.addEventListener('abort', () => {
+                        controller.error(new DOMException('Aborted', 'AbortError'));
+                    });
+                }
+            }))) : original(url, opts);
+        streamLogs();
+        window.fetch = original;
+    }""")
+    system = fixture("system")
+    system["vllm"].update(ready=False, served=None, container_id="replacement", startup=fixture("starting"))
+    p.route(f"{BASE}/api/system", lambda r: r.fulfill(
+        content_type="application/json", body=json.dumps(system)))
+    p.evaluate("refreshSystem()")
+    p.wait_for_function("document.querySelector('#logs').textContent.includes('Loading weights: 1/4')")
+    assert p.evaluate("S.logsFor.startsWith('replacement|')")
+    assert "Console disconnected" not in p.locator("#logs").inner_text()
+    return p
+
+
 def update(b):
     v = fixture("version")
     v["update_available"] = True
@@ -354,7 +447,8 @@ def update(b):
 SCENES = {
     f.__name__.replace("_dialog", ""): f
     for f in (overview, connect, playground, run_dialog, discover, downloading, downloading_run,
-              download_finalizing, download_completion, console, starting, warming, capturing, update)
+              download_finalizing, download_completion, console, starting, warming, capturing,
+              cancelled_start, console_recovery, update)
 }
 
 
