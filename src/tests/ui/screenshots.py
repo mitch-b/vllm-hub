@@ -98,6 +98,77 @@ def discover(b):
     return p
 
 
+def downloading(b):
+    jobs = fixture("downloading")
+    model_id = jobs[0]["repo_id"]
+    models = fixture("models") + [{"id": model_id, "size_gib": 0, "last_used": CAPTURED}]
+    search = [dict(fixture("recommended")[0], id=model_id)]
+    p = open_page(b, {"jobs": jobs, "models": models, "search": search})
+    p.click("#tab-library")
+    p.wait_for_selector('[data-act="cancel-job"]')
+    # A partial cache and older failed attempt must not add duplicate rows or a Run action.
+    for status in ("queued", "downloading", "error", "cancelled", "done"):
+        result = p.evaluate(
+            """status => {
+                S.jobs[0].status = status;
+                renderAll();
+                const id = S.jobs[0].repo_id;
+                return {
+                    rows: document.querySelectorAll('#library .item').length,
+                    count: +document.querySelector('#libCount').textContent,
+                    run: !!document.querySelector(`#library [data-act="run"][data-id="${id}"]`),
+                    retry: !!document.querySelector('#library [data-act="pull"]'),
+                    local: isLocal(id),
+                };
+            }""",
+            status,
+        )
+        assert result["rows"] == result["count"] == len(models), (status, result)
+        assert result["run"] == (status == "done"), (status, result)
+        assert result["retry"] == (status in ("error", "cancelled")), (status, result)
+        assert result["local"] == (status not in ("queued", "downloading")), (status, result)
+    p.evaluate("S.jobs[0].status = 'downloading'; renderAll()")
+    p.click("#tab-discover")
+    p.fill("#q", model_id)
+    p.wait_for_selector('#discover .progress')
+    assert p.locator('#discover [data-act="run"]').count() == 0
+    assert p.locator('#discover [data-act="pull"]').count() == 0
+    p.click("#tab-library")
+    return p
+
+
+def downloading_run(b):
+    p = downloading(b)
+    model_id = "Qwen/Qwen2.5-7B-Instruct"
+    system = fixture("system")
+    p.locator(f'#library [data-act="run"][data-id="{model_id}"]').click()
+    p.wait_for_selector("#runDlg[open]")
+    assert p.locator("#runGo").inner_text().strip().endswith("Run")
+    requests = []
+
+    def run(route):
+        requests.append(route.request.post_data_json)
+        system["vllm"]["model"] = model_id
+        system["vllm"]["context"] = "32768"
+        system["vllm"]["served"].update(id="qwen2.5-7b-instruct", root=model_id, max_model_len=32768)
+        route.fulfill(content_type="application/json", body='{"context": 32768}')
+
+    p.route(
+        f"{BASE}/api/system",
+        lambda r: r.fulfill(content_type="application/json", body=json.dumps(system)),
+    )
+    p.route(f"{BASE}/api/run", run)
+    with p.expect_request(f"{BASE}/api/run"):
+        p.click("#runGo")
+    p.wait_for_selector("#runDlg[open]", state="hidden")
+    p.wait_for_function("id => S.sys.vllm.ready && S.sys.vllm.model === id", arg=model_id)
+    assert len(requests) == 1 and requests[0]["repo_id"] == model_id
+    assert p.locator('#library [data-act="cancel-job"]').count() == 1
+    assert p.locator('#library .item').count() == 4
+    assert p.evaluate("S.jobs[0].status") == "downloading"
+    return p
+
+
 def console(b):
     p = overview(b)
     toggle(p, "console")
@@ -121,7 +192,8 @@ def update(b):
 
 
 SCENES = {
-    f.__name__.replace("_dialog", ""): f for f in (overview, connect, playground, run_dialog, discover, console, update)
+    f.__name__.replace("_dialog", ""): f
+    for f in (overview, connect, playground, run_dialog, discover, downloading, downloading_run, console, update)
 }
 
 

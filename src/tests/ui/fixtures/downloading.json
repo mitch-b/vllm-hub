@@ -1,0 +1,24 @@
+[
+  {
+    "id": "download1",
+    "repo_id": "cyankiwi/Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit",
+    "status": "downloading",
+    "total": 18146236826,
+    "done": 3221225472,
+    "speed_bps": 21600000,
+    "eta_s": 691,
+    "error": null,
+    "percent": 17.8
+  },
+  {
+    "id": "previous1",
+    "repo_id": "cyankiwi/Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit",
+    "status": "error",
+    "total": 18146236826,
+    "done": 0,
+    "speed_bps": 0,
+    "eta_s": null,
+    "error": "Connection interrupted",
+    "percent": 0
+  }
+]
