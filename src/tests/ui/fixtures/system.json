@@ -1,0 +1,46 @@
+{
+  "gpu": {
+    "name": "NVIDIA GeForce RTX 4090",
+    "total_mib": 24564,
+    "used_mib": 23147,
+    "driver": "610.88",
+    "gpu_count": 1
+  },
+  "recommended_util": 0.85,
+  "vllm": {
+    "docker_ok": true,
+    "state": "running",
+    "model": "cyankiwi/Qwen3.6-27B-AWQ-INT4",
+    "ready": true,
+    "served": {
+      "id": "qwen3.6-27b-awq-int4",
+      "object": "model",
+      "created": 1793462969,
+      "owned_by": "vllm",
+      "root": "cyankiwi/Qwen3.6-27B-AWQ-INT4",
+      "parent": null,
+      "max_model_len": 65536,
+      "permission": [
+        {
+          "id": "modelperm-9a3946bd7df69445",
+          "object": "model_permission",
+          "created": 1793462969,
+          "allow_create_engine": false,
+          "allow_sampling": true,
+          "allow_logprobs": true,
+          "allow_search_indices": false,
+          "allow_view": true,
+          "allow_fine_tuning": false,
+          "organization": "*",
+          "group": null,
+          "is_blocking": false
+        }
+      ]
+    },
+    "port": 8000,
+    "context": "65536",
+    "kv_tokens": 66901,
+    "url": "http://localhost:8000/v1"
+  },
+  "image": "vllm/vllm-openai:latest"
+}

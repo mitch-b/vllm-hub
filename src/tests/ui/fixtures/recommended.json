@@ -1,0 +1,112 @@
+[
+  {
+    "id": "Qwen/Qwen2.5-Coder-32B-Instruct-AWQ",
+    "downloads": 1021998,
+    "likes": 50,
+    "gated": false,
+    "quant": "AWQ",
+    "weights_gib": 17.4,
+    "verdict": "fits",
+    "headroom_gib": 3.2,
+    "reason": "Fits with room for a long context."
+  },
+  {
+    "id": "cyankiwi/Qwen3.6-27B-AWQ-INT4",
+    "downloads": 230460,
+    "likes": 114,
+    "gated": false,
+    "quant": "AWQ",
+    "weights_gib": 17.2,
+    "verdict": "fits",
+    "headroom_gib": 3.3,
+    "reason": "Fits with room for a long context."
+  },
+  {
+    "id": "Qwen/Qwen3-8B",
+    "downloads": 7851416,
+    "likes": 2157,
+    "gated": false,
+    "quant": "BF16/FP16",
+    "weights_gib": 15.3,
+    "verdict": "fits",
+    "headroom_gib": 5.3,
+    "reason": "Fits with room for a long context."
+  },
+  {
+    "id": "Qwen/Qwen2.5-Coder-7B-Instruct",
+    "downloads": 1515180,
+    "likes": 854,
+    "gated": false,
+    "quant": "BF16/FP16",
+    "weights_gib": 14.2,
+    "verdict": "fits",
+    "headroom_gib": 6.4,
+    "reason": "Fits with room for a long context."
+  },
+  {
+    "id": "Qwen/Qwen2.5-Coder-14B-Instruct-AWQ",
+    "downloads": 301085,
+    "likes": 39,
+    "gated": false,
+    "quant": "AWQ",
+    "weights_gib": 9.1,
+    "verdict": "fits",
+    "headroom_gib": 11.5,
+    "reason": "Fits with room for a long context."
+  },
+  {
+    "id": "QuantTrio/Qwen3.6-27B-AWQ",
+    "downloads": 84555,
+    "likes": 28,
+    "gated": false,
+    "quant": "AWQ",
+    "weights_gib": 19.9,
+    "verdict": "tight",
+    "headroom_gib": 0.7,
+    "reason": "Fits, but only with a short context window."
+  },
+  {
+    "id": "mistralai/Devstral-Small-2505",
+    "downloads": 2134,
+    "likes": 879,
+    "gated": false,
+    "quant": "BF16/FP16",
+    "weights_gib": 43.9,
+    "verdict": "too_big",
+    "headroom_gib": -23.3,
+    "reason": "Weights will not fit in VRAM."
+  },
+  {
+    "id": "Qwen/Qwen3.6-35B-A3B-FP8",
+    "downloads": 4172736,
+    "likes": 440,
+    "gated": false,
+    "quant": "FP8",
+    "weights_gib": 34.9,
+    "verdict": "too_big",
+    "headroom_gib": -14.3,
+    "reason": "Weights will not fit in VRAM."
+  },
+  {
+    "id": "QuantTrio/Qwen3.6-35B-A3B-AWQ",
+    "downloads": 521862,
+    "likes": 39,
+    "gated": false,
+    "quant": "AWQ",
+    "weights_gib": 23.1,
+    "verdict": "too_big",
+    "headroom_gib": -2.5,
+    "reason": "Weights will not fit in VRAM."
+  },
+  {
+    "id": "openai/gpt-oss-20b",
+    "downloads": 6132075,
+    "likes": 5255,
+    "gated": false,
+    "quant": "MXFP4",
+    "weights_gib": 21.2,
+    "verdict": "too_big",
+    "headroom_gib": -0.6,
+    "reason": "Weights will not fit in VRAM."
+  }
+]

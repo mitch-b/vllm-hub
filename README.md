@@ -11,6 +11,18 @@ A local web UI for running Hugging Face models on [vLLM](https://docs.vllm.ai) w
 - **Local models**: list and delete what's cached.
 - **Live vLLM logs** and a quick test chat.
 
+## Screenshots
+
+| Overview | Connect Copilot |
+| --- | --- |
+| [![Overview: running model, GPU and library](https://raw.githubusercontent.com/mitch-b/vllm-hub/ui-screenshots/main/overview.png)](https://raw.githubusercontent.com/mitch-b/vllm-hub/ui-screenshots/main/overview.png) | [![Copy-paste commands for Copilot CLI, app and SDK](https://raw.githubusercontent.com/mitch-b/vllm-hub/ui-screenshots/main/connect.png)](https://raw.githubusercontent.com/mitch-b/vllm-hub/ui-screenshots/main/connect.png) |
+| **Discover models** | **Run a model** |
+| [![Search Hugging Face and recommendations rated for your GPU](https://raw.githubusercontent.com/mitch-b/vllm-hub/ui-screenshots/main/discover.png)](https://raw.githubusercontent.com/mitch-b/vllm-hub/ui-screenshots/main/discover.png) | [![Run dialog with context and GPU memory settings](https://raw.githubusercontent.com/mitch-b/vllm-hub/ui-screenshots/main/run.png)](https://raw.githubusercontent.com/mitch-b/vllm-hub/ui-screenshots/main/run.png) |
+| **Playground** | **Console** |
+| [![Quick test chat with tokens per second](https://raw.githubusercontent.com/mitch-b/vllm-hub/ui-screenshots/main/playground.png)](https://raw.githubusercontent.com/mitch-b/vllm-hub/ui-screenshots/main/playground.png) | [![Live vLLM logs](https://raw.githubusercontent.com/mitch-b/vllm-hub/ui-screenshots/main/console.png)](https://raw.githubusercontent.com/mitch-b/vllm-hub/ui-screenshots/main/console.png) |
+
+These images are rendered from mocked data by CI and refresh automatically when UI changes merge.
+
 ## Quick start
 
 Requirements: Docker with the NVIDIA container runtime (Docker Desktop + WSL2 on Windows).
@@ -108,8 +120,9 @@ A running model restarts with Docker (`unless-stopped`); **Stop** removes it so 
 ## Development
 
 ```
+.agents/skills/ playbooks for coding agents
 .devcontainer/  Python 3.12 dev container
-.github/        CI, CD, Dependabot
+.github/        CI, CD, UI screenshots, Dependabot
 compose.yml     runs the hub
 src/            app code, tests, Dockerfile
 ```
@@ -134,5 +147,19 @@ docker run --rm -v "${PWD}/src:/w" -w /w python:3.12-slim sh -c "pip install -q 
 
 - **CI** (every PR, about 1 minute): two parallel jobs. One runs ruff, pytest (unit and API tests with Docker and the GPU faked), a UI script syntax check and actionlint. The other runs hadolint and `docker compose config`, then builds the image with layer caching and smoke-tests its API. The **CI passed** check gates merges to `main`.
 - **CD** (merge to `main`, or a `v*.*.*` tag): re-runs CI, then publishes a multi-arch `ghcr.io/mitch-b/vllm-hub` image (`latest`, `sha-*`, semver) with a build provenance attestation.
+
+### UI screenshots
+
+PRs that touch `src/app/static/` or `src/tests/ui/` must pass a **UI screenshots** CI job. It renders every scene in `src/tests/ui/screenshots.py` with Playwright against fixed API fixtures (`src/tests/ui/fixtures/`), so screenshots are identical across machines and need no GPU. A follow-up workflow posts them as a single comment on the PR that's updated on every push.
+
+Images never land on `main`; CI fails if an image file is committed. They live on the `ui-screenshots` branch, which always holds exactly one force-pushed commit: `main/` for this README and `pr-N/<sha>/` for PRs. A weekly job deletes screenshots of PRs closed for more than 7 days, so the branch stays small and its history never grows.
+
+To preview locally (from `src/`):
+
+```powershell
+docker run --rm -v "${PWD}:/w" -w /w mcr.microsoft.com/playwright/python:v1.49.0-noble sh -c "pip install -q -r tests/ui/requirements.txt && python tests/ui/screenshots.py --out .shots"
+```
+
+When you add a UI surface, add a scene (and fixture data if needed) so reviewers can see it.
 
 Agent guidance lives in `.github/copilot-instructions.md`.

@@ -1,0 +1,23 @@
+[
+  {
+    "id": "cyankiwi/Qwen3.6-27B-AWQ-INT4",
+    "size_gib": 19.1,
+    "last_used": 1792194766.2972496,
+    "context_hint": 64512,
+    "context_learned": true
+  },
+  {
+    "id": "Qwen/Qwen2.5-0.5B-Instruct",
+    "size_gib": 0.9,
+    "last_used": 1792537672.2887628,
+    "context_hint": 131072,
+    "context_learned": false
+  },
+  {
+    "id": "Qwen/Qwen2.5-7B-Instruct",
+    "size_gib": 14.2,
+    "last_used": 1792191050.6829314,
+    "context_hint": 65536,
+    "context_learned": false
+  }
+]
