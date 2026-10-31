@@ -9,7 +9,7 @@ import httpx
 from docker.errors import NotFound
 from docker.types import DeviceRequest
 
-from . import profiles
+from . import capacity, profiles
 from .gpu import gpu_info
 
 CONTAINER = os.getenv("VLLM_CONTAINER", "vllm")
@@ -61,9 +61,15 @@ def status() -> dict:
                 ready, served = True, r.json()["data"][0]
         except Exception:
             pass
+    kv = None
+    if ready and model and c.labels.get("vllm-hub.util"):
+        try:
+            kv = capacity.learn(c, model, float(c.labels["vllm-hub.util"]))
+        except Exception:
+            pass
     return {
         "docker_ok": True, "state": state, "model": model, "ready": ready, "served": served,
-        "port": HOST_PORT, "context": c.labels.get("vllm-hub.context"),
+        "port": HOST_PORT, "context": c.labels.get("vllm-hub.context"), "kv_tokens": kv,
         "url": f"http://localhost:{HOST_PORT}/v1",
     }
 
@@ -91,7 +97,8 @@ def start(model_id: str, context: int | None = None, util: float | None = None,
     if util is None:
         util = profiles.choose_util(g["total_mib"], g["used_mib"]) if g else 0.85
     if not context:
-        context = profiles.choose_context(weights_gib, (g["total_mib"] / 1024) if g else 24, util)
+        total_gib = (g["total_mib"] / 1024) if g else 24
+        context = capacity.auto_context(model_id, util) or profiles.choose_context(weights_gib, total_gib, util)
     args = profiles.build_vllm_args(model_id, context, util, graphs=graphs, extra=extra)
 
     _ensure_network()
@@ -100,10 +107,11 @@ def start(model_id: str, context: int | None = None, util: float | None = None,
         env["HF_TOKEN"] = os.environ["HF_TOKEN"]
     client().containers.run(
         IMAGE, args, name=CONTAINER, detach=True, ipc_mode="host",
+        restart_policy={"Name": "unless-stopped"},  # comes back with Docker after a reboot
         device_requests=[DeviceRequest(count=-1, capabilities=[["gpu"]])],
         ports={"8000/tcp": HOST_PORT}, network=NETWORK, environment=env,
         volumes={CACHE_SOURCE: {"bind": "/root/.cache/huggingface", "mode": "rw"}},
-        labels={"vllm-hub.model": model_id, "vllm-hub.context": str(context),
+        labels={"vllm-hub.model": model_id, "vllm-hub.context": str(context), "vllm-hub.util": f"{util:.2f}",
                 "vllm-hub.managed": "true"},
     )
     return {"model": model_id, "context": context, "util": util, "args": args}

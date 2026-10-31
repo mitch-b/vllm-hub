@@ -74,7 +74,13 @@ provider: { type: "openai", baseUrl: "http://localhost:8000/v1", apiKey: "none" 
 // model: the served name shown in the UI, e.g. "qwen3.6-27b-awq-int4"
 ```
 
-Agentic use needs tool calling (enabled automatically) and a context of at least 16K; use 32K on a 24 GB card for large prompts.
+Agentic use needs tool calling (enabled automatically) and a large context, because Copilot's instructions and tool definitions use a big share of the prompt. The Connect tab sets output to a quarter of the context (2K–32K) and the prompt to the rest, so requests never overflow it, and warns below 48K.
+
+### Context sizing
+
+The first time a model runs, the hub reads vLLM's measured KV-cache size from its logs and saves it in the `vllm-hub-state` volume. From then on, **Auto** context uses about 97% of that measured capacity (capped at the model's own limit) instead of a conservative estimate. Run a model, then stop and run it again with Auto to use it. For example, a 27B AWQ model on a 24 GB card goes from 32K to about 56K. If you need more context, choose a smaller model: less VRAM for weights means more for context.
+
+A running model restarts with Docker (`unless-stopped`); **Stop** removes it so it stays off.
 
 ## Configuration
 

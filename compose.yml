@@ -18,12 +18,15 @@ services:
     volumes:
       - ${HF_CACHE_SOURCE:-vllm-hub-hf-cache}:/cache
       - /var/run/docker.sock:/var/run/docker.sock
+      - vllm-hub-state:/state # learned per-model context capacity
     networks: [vllm-hub-net]
     restart: unless-stopped
 
 volumes:
   vllm-hub-hf-cache:
     name: vllm-hub-hf-cache
+  vllm-hub-state:
+    name: vllm-hub-state
 
 networks:
   vllm-hub-net:
