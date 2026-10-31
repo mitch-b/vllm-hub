@@ -226,6 +226,7 @@ table.mini .mono { font-size: 12px; }
 .item .title { font-weight: 560; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: -.01em; }
 .item .title .org { color: var(--subtle); font-weight: 450; }
 .item .meta { color: var(--subtle); font-size: 12.5px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 1px; }
+.item .model-facts { color: var(--muted); }
 .item .meta .sep::before { content: "·"; }
 .item .actions { display: flex; gap: 6px; align-items: center; }
 .item .main { min-width: 0; }
@@ -237,7 +238,12 @@ table.mini .mono { font-size: 12px; }
 .details dd { margin: 2px 0 0; color: var(--text); }
 .chev { transition: transform .2s; }
 [aria-expanded="true"] > .chev { transform: rotate(90deg); }
-.section-label { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 14px 6px; font-size: 12px; font-weight: 600; color: var(--subtle); text-transform: uppercase; letter-spacing: .06em; }
+.section-label { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 14px 14px 6px; font-size: 12px; font-weight: 600; color: var(--subtle); text-transform: uppercase; letter-spacing: .06em; }
+.discover-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; margin: 10px 14px 0; color: var(--muted); font-size: 13px; }
+.discover-controls label { display: flex; align-items: center; gap: 8px; }
+.discover-controls select { background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 6px 10px; cursor: pointer; max-width: 100%; }
+.discover-controls select:hover { border-color: var(--muted); }
+.discover-controls .hint { flex: 1 1 220px; }
 .section-label .switch { text-transform: none; letter-spacing: 0; font-weight: 500; }
 .blank { padding: 36px 16px; text-align: center; color: var(--muted); display: grid; gap: 10px; justify-items: center; }
 .blank b { color: var(--text); font-weight: 600; }
@@ -387,6 +393,16 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
     <div class="tab-body" id="pane-discover" role="tabpanel" hidden>
       <div class="search"><svg><use href="#i-search"/></svg>
         <input id="q" type="search" placeholder="Search Hugging Face, or paste org/model" autocomplete="off" spellcheck="false"><kbd>/</kbd></div>
+      <div class="discover-controls">
+        <label for="discoverSort">Sort <select id="discoverSort">
+          <option value="recommended">Recommended</option>
+          <option value="popular">Popular · downloads</option>
+          <option value="trending">Trending</option>
+          <option value="recent">Recent · uploaded</option>
+          <option value="updated">Recently updated</option>
+        </select></label>
+        <span class="hint">Popularity is not an intelligence score. Dates refer to this repository.</span>
+      </div>
       <div class="section-label"><span id="discLabel">Recommended for your GPU</span>
         <label class="switch"><input type="checkbox" id="showAll"><span id="showAllLabel">Show models that won't fit</span><span id="hiddenCount"></span></label></div>
       <div class="list" id="discover"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
@@ -458,6 +474,7 @@ const GiB = 2 ** 30;
 const fmtGB = b => b >= GiB ? (b / GiB).toFixed(1) + ' GB' : (b / 2 ** 20).toFixed(0) + ' MB';
 const fmtCtx = n => !n ? 'auto' : n >= 1024 ? Math.round(n / 1024) + 'K' : String(n);
 const fmtNum = n => new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(n);
+const fmtDate = s => { const d = new Date(s); return s && Number.isFinite(d.getTime()) ? d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : 'unknown'; };
 const fmtEta = s => s == null ? '' : s >= 3600 ? `${Math.floor(s / 3600)}h ${Math.round(s % 3600 / 60)}m` : s >= 60 ? `${Math.round(s / 60)} min` : `${Math.max(1, Math.round(s))}s`;
 const fmtAgo = t => { if (!t) return ''; const d = Date.now() / 1000 - t;
   return d < 90 ? 'just now' : d < 3600 ? Math.round(d / 60) + ' min ago' : d < 86400 ? Math.round(d / 3600) + 'h ago' : Math.round(d / 86400) + 'd ago'; };
@@ -475,7 +492,7 @@ const store = {
 };
 
 const S = {
-  sys: null, local: [], jobs: [], rec: null, results: null, query: '', searching: false,
+  sys: null, local: [], jobs: [], rec: null, results: null, query: '', searching: false, sort: 'recommended',
   tab: store.get('tab', 'library'), showAll: false, showCommunity: false, expanded: new Set(), dismissed: new Set(),
   open: new Set(), sysAt: null, runAfter: {}, prevJob: {}, chat: [], chatBusy: false, logsFor: null,
 };
@@ -779,9 +796,9 @@ function renderLibrary() {
 let discHtml = '';
 const VERDICT = { fits: ['ok', 'Fits'], tight: ['warn', 'Tight fit'], too_big: ['bad', "Won't fit"], unsupported: ['bad', 'Unsupported'], unknown: ['', 'Size unknown'] };
 function renderDiscover() {
-  const searching = !!S.query;
+  const searching = !!S.query || S.sort !== 'recommended';
   const src = searching ? S.results : S.rec;
-  $('#discLabel').textContent = searching ? (S.searching ? 'Searching…' : `Results for "${S.query}"`) : nativeBackend() ? 'Selected models · official publishers & established converters' : hasFit() ? `Recommended for your ${S.sys.gpu.name.replace(/^NVIDIA\s+(GeForce\s+)?/, '')}` : 'Model catalog · local inference unavailable';
+  $('#discLabel').textContent = searching ? (S.searching ? 'Searching…' : S.query ? `Results for "${S.query}"` : $('#discoverSort').selectedOptions[0].textContent) : nativeBackend() ? 'Selected models · official publishers & established converters' : hasFit() ? `Recommended for your ${S.sys.gpu.name.replace(/^NVIDIA\s+(GeForce\s+)?/, '')}` : 'Model catalog · local inference unavailable';
   $('#q').placeholder = nativeBackend() ? 'Search GGUF models, or paste hf.co/publisher/model:Q4_K_M' : 'Search Hugging Face, or paste org/model';
   $('#showAll').disabled = !hasFit() && !nativeBackend();
   $('#showAll').checked = nativeBackend() ? S.showCommunity : S.showAll;
@@ -810,6 +827,9 @@ function discoverRow(m, disabled) {
   const size = m.weights_gib ?? m.size_gib;
   const meta = [size ? `${size} ${nativeBackend() ? 'GiB weights' : 'GB'}` : '', m.quant, m.source_label ? `${m.source_label} · ${m.publisher}` : '', m.downloads != null ? `${fmtNum(m.downloads)} downloads` : '']
     .filter(Boolean).map(x => `<span>${esc(x)}</span>`).join('<span class="sep"></span>');
+  const hint = nativeBackend() ? m.context_hint ? `Auto default ${fmtCtx(m.context_hint)}` : ''
+    : hasFit() && m.context_hint ? `${m.context_learned ? 'Measured' : 'Estimated'} context ${fmtCtx(m.context_hint)}` : '';
+  const context = [hint, `Model maximum ${m.max_context ? fmtCtx(m.max_context) : 'unknown'}`].filter(Boolean).join(' · ');
   let actions;
   if (local) actions = `<span class="badge">In library</span><button class="btn sm" data-act="run" data-id="${esc(m.id)}" data-w="${size ?? ''}" ${inferenceAttrs()}>${icon('play')}Run</button>`;
   else if (job) actions = `<span class="badge accent">${job.finalizing ? 'Finalizing snapshot…' : job.total ? jobPercent(job) + '%' : 'Queued'}</span>`;
@@ -821,6 +841,8 @@ function discoverRow(m, disabled) {
       <div class="meta">${label ? `<span class="badge ${cls}" style="height:19px;font-size:11.5px"><span class="dot"></span>${label}</span>` : ''}${meta}
         <button class="btn ghost sm" style="height:22px;padding:0 6px;font-size:12px" data-act="expand" data-id="${esc(m.id)}" aria-expanded="${open}">Details${icon('chev', 'chev').replace('<svg', '<svg style="width:12px;height:12px"')}</button></div>
       ${m.use_case ? `<div class="meta">${esc(m.use_case)}</div>` : ''}
+      <div class="meta model-facts">${esc(context)}</div>
+      <div class="meta model-facts">Uploaded ${esc(fmtDate(m.uploaded_at))}<span class="sep"></span>Updated ${esc(fmtDate(m.updated_at))}</div>
       ${m.verdict === 'unsupported' && nativeBackend() ? `<div class="meta">${esc(m.reason)}</div>` : ''}
       ${job ? `<div class="progress bar"><i style="width:${job.percent || 0}%"></i></div>` : ''}</div>
     <div class="actions">${actions}</div>
@@ -830,6 +852,9 @@ function discoverRow(m, disabled) {
       <div><dt>Headroom</dt><dd>${hasFit() && m.headroom_gib != null ? m.headroom_gib + ' GB' : '—'}</dd></div>
       <div><dt>Format</dt><dd>${esc(m.quant || '—')}</dd></div>
       <div><dt>Likes</dt><dd>${m.likes != null ? fmtNum(m.likes) : '—'}</dd></div></dl>
+      <div>${esc(nativeBackend() ? 'Auto is a conservative default, not a host-memory fit estimate.' : 'Context preview uses 90% GPU memory and default settings. Actual capacity depends on memory settings, concurrency and the engine.')}</div>
+      ${m.context_error ? `<div>${esc(m.context_error)}</div>` : ''}
+      <div>Uploaded and updated dates describe this repository, not the original model release. Updates may include documentation changes.</div>
       <div><a class="btn ghost sm" style="padding-left:0" href="${esc(modelUrl(m.id))}" target="_blank" rel="noopener">${icon('ext')}${m.id.startsWith('ai/') ? 'View on Docker Hub' : 'View on Hugging Face'}</a></div></div>` : ''}
   </div>`;
 }
@@ -866,8 +891,8 @@ async function refreshSystem() {
     if (feature('logs') && ['loading', 'ready', 'exited'].includes(now) && (S.logsFor !== logKey() || !logAbort)) streamLogs();
     if (now === 'idle' || !feature('logs')) { logAbort?.abort(); logAbort = null; S.logsFor = null; }
     if (previousBackend !== undefined && previousBackend !== S.sys.hosting?.backend) {
-      S.query = ''; $('#q').value = ''; S.results = null;
-      await loadLocal(); loadRecommended();
+      ++searchSeq; clearTimeout(searchTimer); S.query = ''; $('#q').value = ''; S.results = null; S.searching = false;
+      await loadLocal(); loadRecommended(); onQuery();
     }
   } catch (error) {
     S.sys = {
@@ -974,11 +999,12 @@ let searchTimer, searchSeq = 0;
 function onQuery() {
   S.query = $('#q').value.trim();
   clearTimeout(searchTimer);
-  if (!S.query) { S.results = null; S.searching = false; renderDiscover(); return; }
+  const seq = ++searchSeq, query = S.query, sort = S.sort === 'recommended' ? 'popular' : S.sort;
+  if (!S.query && S.sort === 'recommended') { S.results = null; S.searching = false; renderDiscover(); return; }
+  S.results = null;
   S.searching = true; renderDiscover();
   searchTimer = setTimeout(async () => {
-    const seq = ++searchSeq;
-    try { const r = await api('/api/search?q=' + encodeURIComponent(S.query)); if (seq === searchSeq) S.results = r; }
+    try { const r = await api('/api/search?q=' + encodeURIComponent(query) + '&sort=' + sort); if (seq === searchSeq) S.results = r; }
     catch (e) { if (seq === searchSeq) { S.results = []; toast('Search failed', e.message, 'bad'); } }
     if (seq === searchSeq) { S.searching = false; renderDiscover(); }
   }, 350);
@@ -1021,13 +1047,13 @@ function openRunDialog(id, w) {
   if (!requireInference()) return;
   const d = $('#runDlg'), v = V(), local = isLocal(id);
   const saved = store.get('ctx.' + id, null), opts = store.get('opts.' + id, {});
-  const lm = S.local.find(m => m.id === id);
+  const lm = { ...[...(S.results || []), ...(S.rec || [])].find(m => m.id === id), ...S.local.find(m => m.id === id) };
   let ctx = lm?.context_learned && saved && saved < lm.context_hint ? 0 : saved ?? (nativeBackend() || lm?.context_hint >= 16384 ? 0 : 32768);
   const autoUtil = S.sys?.recommended_util ?? 0.9;
   $('#runName').innerHTML = `<span class="mono">${esc(id)}</span>`;
   $('#ctxHint').textContent = lm?.context_hint ? nativeBackend() ? `default ${fmtCtx(lm.context_hint)}` : `auto ${lm.context_learned ? '=' : '≈'} ${fmtCtx(lm.context_hint)}${lm.context_learned ? ' (measured)' : ''}` : '';
   const seg = $('#ctxSeg');
-  const contexts = nativeBackend() ? [0, 4096, 8192, 16384, 32768].filter(n => lm?.max_context == null || n <= lm.max_context) : CTX_OPTS;
+  const contexts = (nativeBackend() ? [0, 4096, 8192, 16384, 32768] : CTX_OPTS).filter(n => lm?.max_context == null || n <= lm.max_context);
   if (!contexts.includes(ctx)) ctx = 0;
   const drawSeg = () => seg.innerHTML = contexts.map(n => `<button type="button" role="radio" aria-checked="${n === ctx}" data-v="${n}">${n ? fmtCtx(n) : 'Auto'}</button>`).join('');
   drawSeg();
@@ -1212,6 +1238,7 @@ document.addEventListener('click', e => {
   }
 });
 $('#q').addEventListener('input', onQuery);
+$('#discoverSort').addEventListener('change', e => { S.sort = e.target.value; onQuery(); });
 $('#showAll').addEventListener('change', e => {
   if (nativeBackend()) S.showCommunity = e.target.checked;
   else S.showAll = e.target.checked;

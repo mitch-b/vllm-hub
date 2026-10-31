@@ -116,7 +116,7 @@ tool calling still depend on the selected model and engine.
 Native Discover starts with six selected Hugging Face GGUF models for general
 chat and coding, from Qwen and Unsloth. Each shows its use case, weight size,
 and whether the repository belongs to an official publisher or an established
-converter (not the original author). Search prioritizes those publisher groups,
+converter (not the original author). Search respects the selected catalog sort,
 labels community uploads, and includes only repositories listing Q4_K_M files.
 Community uploads are hidden by default; **Include community uploads** reveals
 them without presenting them as official or endorsed.
@@ -124,6 +124,24 @@ Weights are not total memory requirements; leave room for macOS and context.
 An unavailable recommendation is shown with an explicit verification error,
 without hiding the other picks. Paste `hf.co/publisher/model:Q4_K_M` to import
 a specific repository; newer architectures may require an updated native engine.
+
+Discover offers **Recommended**, **Popular** (downloads), **Trending** (Hugging
+Face's trending score), **Recent** (repository creation), and **Recently updated**.
+The sort applies to the full upstream search, not just the loaded rows; choose a
+sort without a search term to browse the catalog. Searching while Recommended is
+selected uses downloads. Popularity and weight size are not intelligence scores;
+benchmark rankings are not currently integrated.
+
+Each result shows its repository's upload and last-update dates (not the original
+model's release date; updates may include README edits). Missing dates or model
+maximum-context metadata remain **unknown**. CUDA previews fetch only the small
+`config.json`, not weights, and show conservative context estimates at 90% GPU
+memory, or learned capacity when available, capped by the reported model maximum.
+Estimates require known weights and a compatible GPU fit; memory settings,
+concurrency and the engine affect actual capacity. Native previews show the
+reported GGUF context maximum and an Auto default of up to 8K, not a hardware-fit
+claim. Metadata is cached for ten minutes; read failures are logged and surfaced
+in model details without preventing catalog browsing.
 
 If a runtime is missing, the hub explains the one-time setup and reconnects
 when it becomes available. It never changes a running model for an unsupported

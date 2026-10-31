@@ -128,6 +128,73 @@ def discover(b):
     return p
 
 
+def discover_sort(b):
+    rows = fixture("search")[:3]
+    p = open_page(b, {"search": rows})
+    requests = []
+
+    def search(route):
+        from urllib.parse import parse_qs, urlparse
+        query = parse_qs(urlparse(route.request.url).query)
+        requests.append(query)
+        order = {
+            "recent": sorted(rows, key=lambda row: row["uploaded_at"], reverse=True),
+            "updated": sorted(rows, key=lambda row: row["updated_at"], reverse=True),
+            "popular": rows,
+            "trending": list(reversed(rows)),
+        }
+        route.fulfill(content_type="application/json", body=json.dumps(order[query["sort"][0]]))
+
+    p.route(f"{BASE}/api/search?**", search)
+    p.click("#tab-discover")
+    for sort in ("popular", "trending", "updated", "recent"):
+        with p.expect_request(f"{BASE}/api/search?**"):
+            p.select_option("#discoverSort", sort)
+        p.wait_for_function("S.results && !S.searching")
+        assert requests[-1]["sort"] == [sort]
+        assert "q" not in requests[-1]
+        expected = rows[-1]["id"] if sort in ("recent", "trending") else rows[0]["id"]
+        assert p.locator('#discover [data-act="run"]').first.get_attribute("data-id") == expected
+    assert "Uploaded" in p.locator("#discover").inner_text()
+    assert "Updated" in p.locator("#discover").inner_text()
+    assert "Estimated context 32K" in p.locator("#discover").inner_text()
+    assert "Measured context 64K" in p.locator("#discover").inner_text()
+    assert "Model maximum 128K" in p.locator("#discover").inner_text()
+    p.locator('#discover [data-act="expand"]').first.click()
+    assert "documentation changes" in p.locator("#discover .details").inner_text()
+    with p.expect_request(f"{BASE}/api/search?**"):
+        p.fill("#q", "coder")
+    p.wait_for_function("S.results && !S.searching")
+    assert requests[-1]["q"] == ["coder"] and requests[-1]["sort"] == ["recent"]
+    p.locator('#discover [data-act="run"]').first.click()
+    p.wait_for_selector("#runDlg[open]")
+    assert "auto" in p.locator("#ctxHint").inner_text()
+    assert p.locator('#ctxSeg button[data-v="131072"]').count() == 1
+    p.locator('#runDlg button[value="cancel"]').click()
+    p.evaluate("id => S.local.push({id, context_hint: 8192})", rows[0]["id"])
+    p.locator(f'#discover [data-act="run"][data-id="{rows[0]["id"]}"]').click()
+    p.wait_for_selector("#runDlg[open]")
+    assert p.locator('#ctxSeg button[data-v="32768"]').count() == 1
+    assert p.locator('#ctxSeg button[data-v="65536"]').count() == 0
+    assert p.locator('#ctxSeg button[data-v="131072"]').count() == 0
+    p.locator('#runDlg button[value="cancel"]').click()
+    p.evaluate("S.local.pop()")
+    p.select_option("#discoverSort", "recommended")
+    p.fill("#q", "")
+    p.wait_for_function("S.results === null && !S.searching")
+    with p.expect_request(f"{BASE}/api/search?**"):
+        p.select_option("#discoverSort", "recent")
+    p.wait_for_function("S.results && !S.searching")
+    return p
+
+
+def discover_mobile(b):
+    p = discover_sort(b)
+    p.set_viewport_size({"width": 390, "height": 844})
+    assert p.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    return p
+
+
 def downloading(b):
     jobs = fixture("downloading")
     model_id = jobs[0]["repo_id"]
@@ -589,6 +656,9 @@ def macos_mobile(b):
 
 def native_discover(b):
     data = fixture("native")
+    for row in data["recommended"]:
+        row.update(uploaded_at="2026-10-01T12:00:00Z", updated_at="2026-10-30T12:00:00Z",
+                   max_context=32768, context_hint=8192, context_learned=False)
     search = [
         {**data["recommended"][0], "source_kind": "official"},
         {**data["recommended"][1], "source_kind": "converter"},
@@ -609,10 +679,15 @@ def native_discover(b):
     assert p.locator('#discover a').first.get_attribute("href") == "https://huggingface.co/qwen/qwen3-8b-gguf"
     p.fill("#q", "qwen")
     p.wait_for_function("S.results && !S.searching")
+    assert "Auto default 8K" in p.locator("#discover").inner_text()
+    assert "Estimated context" not in p.locator("#discover").inner_text()
+    p.select_option("#discoverSort", "trending")
+    p.wait_for_function("S.results && !S.searching")
     assert "Community upload" not in p.locator("#discover").inner_text()
     p.check("#showAll")
     assert "Community upload" in p.locator("#discover").inner_text()
     p.uncheck("#showAll")
+    p.select_option("#discoverSort", "recommended")
     p.fill("#q", "")
     p.wait_for_function("S.query === ''")
     return p
@@ -670,7 +745,8 @@ def no_docker(b):
 
 SCENES = {
     f.__name__.replace("_dialog", ""): f
-    for f in (overview, connect, playground, activity, run_dialog, discover, downloading, downloading_run,
+    for f in (overview, connect, playground, activity, run_dialog, discover, discover_sort, discover_mobile,
+              downloading, downloading_run,
               download_finalizing, download_completion, console, starting, warming, capturing,
               cancelled_start, console_recovery, update, macos, macos_mobile, native_discover, macos_start_failed,
               macos_connection_lost, no_gpu, no_docker)

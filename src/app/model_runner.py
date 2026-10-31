@@ -162,6 +162,7 @@ def recommended() -> list[dict]:
             size = sum(f.size for f in files) if all(f.size is not None for f in files) else None
             row.update(size_gib=round(size / 2**30, 2) if size is not None else None,
                        gated=bool(info.gated), source_model=(info.card_data or {}).get("base_model"),
+                       **hf.native_metadata(info),
                        reason=f"{RECOMMENDED[repo]}. Weights only: leave memory for macOS and context. "
                               "Model Runner selects the native engine; no host-memory fit is claimed.")
         except (httpx.HTTPError, HfHubHTTPError, ValueError) as exc:
@@ -172,17 +173,19 @@ def recommended() -> list[dict]:
         return list(pool.map(entry, RECOMMENDED))
 
 
-def search(query: str, limit: int = 25) -> list[dict]:
+def search(query: str, limit: int = 25, sort: str = "popular") -> list[dict]:
     # GGUF is portable across Model Runner's Metal/CUDA/CPU engines.
     results = hf.api.list_models(search=query, filter="gguf", pipeline_tag="text-generation",
-                                 sort="downloads", limit=min(max(limit, 1) * 2, 50), full=True)
+                                 sort=hf.SORTS[sort], limit=min(max(limit, 1) * 2, 50),
+                                 expand=["siblings", "downloads", "likes", "gated", "gguf", "createdAt",
+                                         "lastModified"])
     rows = [{
         "id": _reference("hf.co/" + m.id + ":Q4_K_M"), "quant": "GGUF Q4_K_M", "verdict": "unknown",
         "reason": "Q4_K_M GGUF files are listed by this repository. A converter is not the original model author.",
         "downloads": m.downloads, "likes": m.likes, "gated": bool(m.gated), **_source(m.id),
+        **hf.native_metadata(m),
     } for m in results if _q4_files(m.siblings or [])]
-    priority = {"official": 0, "converter": 1, "community": 2}
-    return sorted(rows, key=lambda row: priority[row["source_kind"]])[:min(max(limit, 1), 50)]
+    return rows[:min(max(limit, 1), 50)]
 
 
 def _pull(job: downloads.Job) -> None:

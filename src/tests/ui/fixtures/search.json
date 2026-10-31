@@ -1,6 +1,11 @@
 [
   {
     "id": "Qwen/Qwen3-8B-AWQ",
+    "uploaded_at": "2026-10-01T12:00:00Z",
+    "updated_at": "2026-10-30T12:00:00Z",
+    "max_context": 32768,
+    "context_hint": 32768,
+    "context_learned": false,
     "downloads": 2204135,
     "likes": 69,
     "gated": false,
@@ -12,6 +17,11 @@
   },
   {
     "id": "Qwen/Qwen3-14B-AWQ",
+    "uploaded_at": "2026-10-05T12:00:00Z",
+    "updated_at": "2026-10-29T12:00:00Z",
+    "max_context": 131072,
+    "context_hint": 65536,
+    "context_learned": true,
     "downloads": 2119703,
     "likes": 89,
     "gated": false,
@@ -23,6 +33,11 @@
   },
   {
     "id": "cyankiwi/Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit",
+    "uploaded_at": "2026-10-10T12:00:00Z",
+    "updated_at": "2026-10-28T12:00:00Z",
+    "max_context": 131072,
+    "context_hint": 32768,
+    "context_learned": false,
     "downloads": 636719,
     "likes": 68,
     "gated": false,

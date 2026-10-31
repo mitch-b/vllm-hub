@@ -3,9 +3,10 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import Thread
+from typing import Literal
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -68,11 +69,13 @@ def system():
 
 
 @app.get("/api/search")
-def search(q: str, limit: int = 25):
+def search(q: str = "", limit: int = Query(default=25, ge=1),
+           sort: Literal["popular", "recent", "updated", "trending"] = "popular"):
     try:
+        limit = min(limit, 50)
         if hosting.detect()["backend"] == "model-runner":
-            return model_runner.search(q, limit)
-        return hf.search(q, min(limit, 50))
+            return model_runner.search(q, limit, sort)
+        return hf.search(q, limit, sort)
     except Exception as exc:
         raise HTTPException(502, f"Hugging Face search failed: {exc}") from exc
 

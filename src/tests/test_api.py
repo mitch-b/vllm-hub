@@ -8,7 +8,7 @@ import pytest
 from docker.errors import APIError, NotFound
 from fastapi.testclient import TestClient
 
-from app import downloads, hosting, main, model_runner, runner
+from app import downloads, hf, hosting, main, model_runner, runner
 
 GPU = {"name": "Test GPU", "total_mib": 24564, "used_mib": 1000, "driver": "1", "gpu_count": 1}
 INDEX = Path(main.STATIC / "index.html").read_text(encoding="utf-8")
@@ -136,6 +136,44 @@ def test_native_api_dispatch(native_api, monkeypatch, method, path, handler, bod
     response = native_api.request(method, path, json=body)
     assert response.status_code == 200 and response.json() == result
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("sort", ["popular", "recent", "updated", "trending"])
+@pytest.mark.parametrize("native", [False, True])
+def test_search_sort_dispatch(api, monkeypatch, sort, native):
+    calls = []
+    if native:
+        monkeypatch.setattr(hosting, "detect", lambda: {"backend": "model-runner"})
+    def search(*args):
+        calls.append(args)
+        return [{"id": "fixture/model", "uploaded_at": "2026-10-01T00:00:00+00:00",
+                 "updated_at": None, "max_context": 32768, "context_hint": 8192}]
+    monkeypatch.setattr(model_runner if native else hf, "search", search)
+    response = api.get(f"/api/search?sort={sort}&limit=10")
+    assert response.status_code == 200
+    assert calls == [("", 10, sort)]
+    assert response.json()[0]["max_context"] == 32768
+
+
+@pytest.mark.parametrize("query", ["sort=intelligence", "limit=0"])
+def test_search_validates_sort_and_limit(api, query):
+    assert api.get("/api/search?" + query).status_code == 422
+
+
+def test_search_keeps_existing_large_limit_clamp(api, monkeypatch):
+    calls = []
+    monkeypatch.setattr(hf, "search", lambda *args: calls.append(args) or [])
+    assert api.get("/api/search?q=coder&limit=100").status_code == 200
+    assert calls == [("coder", 50, "popular")]
+
+
+def test_search_failure_is_explicit(api, monkeypatch):
+    def fail(*args):
+        raise RuntimeError("Catalog unavailable")
+    monkeypatch.setattr(hf, "search", fail)
+    response = api.get("/api/search?sort=trending")
+    assert response.status_code == 502
+    assert "Catalog unavailable" in response.json()["detail"]
 
 
 def test_native_api_system_and_diagnostics(native_api, monkeypatch):
