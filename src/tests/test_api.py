@@ -1,5 +1,7 @@
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 
 import pytest
@@ -251,6 +253,151 @@ def test_run_reports_runner_errors(api, monkeypatch):
     monkeypatch.setattr(runner, "start", fail)
     r = api.post("/api/run", json={"repo_id": "org/m"})
     assert r.status_code == 500 and "no GPU" in r.json()["detail"]
+
+
+@pytest.fixture
+def runtime(api, monkeypatch):
+    containers = SimpleNamespace(current=None, runs=[])
+
+    def get(name):
+        if containers.current is None:
+            raise NotFound("no container")
+        return containers.current
+
+    def remove(force):
+        assert force
+        containers.current = None
+
+    def run(image, args, **kwargs):
+        containers.runs.append(kwargs)
+        containers.current = SimpleNamespace(
+            id=f"container-{len(containers.runs)}", status="running", labels=kwargs["labels"],
+            attrs={"State": {"StartedAt": "2026-10-31T16:00:00Z"}},
+            remove=remove, logs=lambda **kw: b"Starting to load model\n",
+        )
+        return containers.current
+
+    containers.get, containers.run = get, run
+    monkeypatch.setattr(runner, "client", lambda: SimpleNamespace(containers=containers))
+    monkeypatch.setattr(runner, "gpu_info", lambda: GPU)
+    monkeypatch.setattr(runner, "_ensure_network", lambda: None)
+    monkeypatch.setattr(runner, "_start_cancel", None)
+    monkeypatch.setattr(runner.httpx, "get", lambda *a, **kw: SimpleNamespace(status_code=503))
+    return containers
+
+
+def test_stop_removes_loading_container_and_explicit_run_still_works(api, runtime):
+    request = {"repo_id": "org/model", "context": 8192, "util": 0.9}
+    assert api.post("/api/run", json=request).status_code == 200
+    assert api.get("/api/system").json()["vllm"]["container_id"] == "container-1"
+    assert runtime.runs[0]["restart_policy"] == {"Name": "unless-stopped"}
+    assert api.post("/api/stop").json() == {"ok": True}
+    assert api.post("/api/stop").json() == {"ok": True}
+    assert api.get("/api/system").json()["vllm"]["state"] == "stopped"
+    assert api.post("/api/run", json=request).status_code == 200
+    assert runtime.current.id == "container-2"
+
+
+def test_cancel_interrupts_start_while_waiting_for_vram(api, runtime, monkeypatch):
+    waiting = Event()
+
+    def busy_gpu():
+        waiting.set()
+        return dict(GPU, used_mib=GPU["total_mib"])
+
+    monkeypatch.setattr(runner, "gpu_info", busy_gpu)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(api.post, "/api/run", json={"repo_id": "org/model", "context": 8192})
+        try:
+            assert waiting.wait(2)
+            assert api.post("/api/stop").status_code == 200
+            response = pending.result(timeout=2)
+            assert response.status_code == 409
+            assert response.json()["detail"] == "Model start cancelled"
+            assert not runtime.runs
+        finally:
+            runner.stop()
+
+
+@pytest.mark.parametrize("replacement", [False, True])
+def test_cancelled_preparation_cannot_create_a_container(api, runtime, monkeypatch, replacement):
+    preparing, release = Event(), Event()
+    build = runner.profiles.build_vllm_args
+
+    def prepare(model, *args, **kwargs):
+        if model == "org/first":
+            preparing.set()
+            assert release.wait(5)
+        return build(model, *args, **kwargs)
+
+    monkeypatch.setattr(runner.profiles, "build_vllm_args", prepare)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(api.post, "/api/run", json={
+            "repo_id": "org/first", "context": 8192, "util": 0.9,
+        })
+        try:
+            assert preparing.wait(2)
+            if replacement:
+                assert api.post("/api/run", json={
+                    "repo_id": "org/second", "context": 8192, "util": 0.9,
+                }).status_code == 200
+            else:
+                assert api.post("/api/stop").status_code == 200
+            release.set()
+            assert pending.result(timeout=2).status_code == 409
+            assert len(runtime.runs) == int(replacement)
+            if replacement:
+                assert runtime.current.labels["vllm-hub.model"] == "org/second"
+            else:
+                assert runtime.current is None
+        finally:
+            release.set()
+
+
+def test_stop_racing_container_creation_removes_the_new_container(api, runtime, monkeypatch):
+    creating, release, stopping = Event(), Event(), Event()
+    run = runtime.run
+
+    def create(*args, **kwargs):
+        creating.set()
+        assert release.wait(5)
+        return run(*args, **kwargs)
+
+    def stop():
+        stopping.set()
+        return api.post("/api/stop")
+
+    monkeypatch.setattr(runtime, "run", create)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        pending = pool.submit(api.post, "/api/run", json={
+            "repo_id": "org/model", "context": 8192, "util": 0.9,
+        })
+        try:
+            assert creating.wait(2)
+            cancelled = pool.submit(stop)
+            assert stopping.wait(2)
+            release.set()
+            assert pending.result(timeout=2).status_code == 200
+            assert cancelled.result(timeout=2).status_code == 200
+            assert runtime.current is None
+        finally:
+            release.set()
+
+
+def test_logs_returns_container_output_and_stopped_message(api, runtime):
+    assert api.get("/api/logs").text == "vLLM is not running.\n"
+    assert api.post("/api/run", json={
+        "repo_id": "org/model", "context": 8192, "util": 0.9,
+    }).status_code == 200
+    calls = []
+
+    def logs(**kwargs):
+        calls.append(kwargs)
+        return iter([b"Loading weights\n", b"Shard 1/4\n"])
+
+    runtime.current.logs = logs
+    assert api.get("/api/logs").text == "Loading weights\nShard 1/4\n"
+    assert calls == [{"stream": True, "follow": True, "tail": 100}]
 
 
 def test_chat_reports_upstream_errors(api, monkeypatch):
