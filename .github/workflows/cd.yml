@@ -22,6 +22,10 @@ jobs:
   ci:
     name: CI
     uses: ./.github/workflows/ci.yml
+    # Must cover every permission ci.yml's jobs request, or the run fails at startup.
+    permissions:
+      contents: read
+      pull-requests: read
 
   build-and-push:
     name: Publish image
