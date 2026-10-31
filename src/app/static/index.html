@@ -572,8 +572,9 @@ function renderRuntime() {
 const conn = Object.assign({ tab: 'cli', shell: 'pwsh', mode: 'env', autopilot: false, yolo: false, task: '' }, store.get('conn', {}));
 const saveConn = () => store.set('conn', { ...conn, task: '' });
 function tokenLimits() {
+  // Copilot sends max_tokens = output limit, and vLLM rejects prompt + max_tokens > context, so they must sum to it.
   const ctx = +V().context || 32768;
-  const out = ctx >= 32768 ? 8192 : ctx >= 16384 ? 4096 : 2048;
+  const out = Math.min(32768, Math.max(2048, Math.floor(ctx / 4 / 1024) * 1024));
   return { ctx, out, prompt: ctx - out };
 }
 const qPs = s => `"${s.replace(/[`"$]/g, '`$&')}"`;
@@ -625,6 +626,7 @@ function renderSnippets() {
         <input class="textin" id="connTask" placeholder="Optional task to start with, e.g. Add tests for utils.ts" value="${esc(conn.task)}">
       </div>
       ${conn.autopilot && !conn.yolo ? `<div class="note info">${icon('info')}<div>Autopilot will still stop to ask for tool permissions. Turn on <b>Allow all tools</b> for hands-off runs, in a folder you trust.</div></div>` : ''}
+      ${t.ctx < 49152 ? `<div class="note">${icon('alert')}<div>Only ${t.prompt.toLocaleString()} prompt tokens. Copilot's instructions and tools take a large share, so long agent sessions will hit the limit. Restart this model with <b>Auto</b> context, or pick a smaller model to free VRAM for context.</div></div>` : ''}
       ${conn.mode === 'env'
         ? codeBlock('Run in a terminal, in your project folder', cliCommand(), 'cliCode')
           + `<div class="subtle">Env vars apply to this terminal only. Token limits are set from the ${fmtCtx(t.ctx)} context so prompts never overflow it.</div>`
@@ -882,10 +884,10 @@ function openRunDialog(id, w) {
   const d = $('#runDlg'), v = V(), local = isLocal(id);
   const saved = store.get('ctx.' + id, null), opts = store.get('opts.' + id, {});
   const lm = S.local.find(m => m.id === id);
-  let ctx = saved ?? (lm?.context_hint >= 16384 ? 0 : 32768);
+  let ctx = lm?.context_learned && saved && saved < lm.context_hint ? 0 : saved ?? (lm?.context_hint >= 16384 ? 0 : 32768);
   const autoUtil = S.sys?.recommended_util ?? 0.9;
   $('#runName').innerHTML = `<span class="mono">${esc(id)}</span>`;
-  $('#ctxHint').textContent = lm?.context_hint ? `auto ≈ ${fmtCtx(lm.context_hint)}` : '';
+  $('#ctxHint').textContent = lm?.context_hint ? `auto ${lm.context_learned ? '=' : '≈'} ${fmtCtx(lm.context_hint)}${lm.context_learned ? ' (measured)' : ''}` : '';
   const seg = $('#ctxSeg');
   const drawSeg = () => seg.innerHTML = CTX_OPTS.map(n => `<button type="button" role="radio" aria-checked="${n === ctx}" data-v="${n}">${n ? fmtCtx(n) : 'Auto'}</button>`).join('');
   drawSeg();

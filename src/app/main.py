@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import downloads, hf, profiles, runner, updates
+from . import capacity, downloads, hf, profiles, runner, updates
 from .gpu import gpu_info
 
 
@@ -70,7 +70,9 @@ def models():
     total = gpu["total_mib"] / 1024 if gpu else None
     out = []
     for m in downloads.cached_models():
-        m["context_hint"] = profiles.choose_context(m["size_gib"], total, 0.85) if total else 8192
+        learned = capacity.auto_context(m["id"], 0.90)
+        m["context_hint"] = learned or (profiles.choose_context(m["size_gib"], total, 0.85) if total else 8192)
+        m["context_learned"] = bool(learned)
         out.append(m)
     return out
 
