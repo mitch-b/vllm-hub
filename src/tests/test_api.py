@@ -3,7 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from docker.errors import NotFound
+from docker.errors import APIError, NotFound
 from fastapi.testclient import TestClient
 
 from app import downloads, main, runner
@@ -51,6 +51,146 @@ def test_system_without_docker_or_gpu(monkeypatch):
     body = TestClient(main.app).get("/api/system").json()
     assert body["gpu"] is None and body["recommended_util"] is None
     assert body["vllm"]["docker_ok"] is False
+
+
+@pytest.fixture
+def starting(api, monkeypatch):
+    started = "2026-10-31T16:00:00.123456789Z"
+    epoch = runner._timestamp(started)
+    c = SimpleNamespace(
+        id="first-container", status="running", labels={"vllm-hub.model": "org/model"},
+        attrs={"State": {"StartedAt": started}},
+    )
+    calls = []
+
+    def logs(**kwargs):
+        calls.append(kwargs)
+        return c.output
+
+    c.output = b""
+    c.logs = logs
+    monkeypatch.setattr(runner, "_container", lambda: c)
+    monkeypatch.setattr(runner.time, "time", lambda: epoch + 125)
+    monkeypatch.setattr(runner.httpx, "get", lambda *a, **kw: SimpleNamespace(status_code=503))
+    return c, calls
+
+
+def test_system_startup_timer_survives_refresh_and_resets_for_new_attempt(api, starting, monkeypatch):
+    c, calls = starting
+    first = api.get("/api/system").json()["vllm"]["startup"]
+    assert first["container_id"] == "first-container"
+    assert first["started_at"] == pytest.approx(1793462400.123456, rel=0, abs=0.00001)
+    assert first["elapsed_seconds"] == 125
+    monkeypatch.setattr(runner.time, "time", lambda: first["started_at"] + 130)
+    refreshed = api.get("/api/system").json()["vllm"]["startup"]
+    assert refreshed["started_at"] == first["started_at"]
+    assert refreshed["elapsed_seconds"] == 130
+    # Docker can restart the same ID; StartedAt, not its creation time, identifies the attempt.
+    c.attrs["State"]["StartedAt"] = "2026-10-31T16:02:00.123456789Z"
+    restarted = api.get("/api/system").json()["vllm"]["startup"]
+    assert restarted["container_id"] == first["container_id"]
+    assert restarted["elapsed_seconds"] == 10
+    c.id = "second-container"
+    c.labels["vllm-hub.model"] = "org/other"
+    assert api.get("/api/system").json()["vllm"]["startup"]["container_id"] == "second-container"
+    assert calls[0] == {"tail": 300, "since": int(first["started_at"]), "timestamps": True}
+
+
+@pytest.mark.parametrize("message,stage,progress", [
+    ("Starting to load model org/model", "Loading weights", None),
+    ("Loading safetensors checkpoint shards: 25%|xx| 2/8 [00:03]", "Loading weights",
+     {"completed": 2, "total": 8}),
+    ("Loading pt checkpoint shards: 0%| | 0/4 [00:00]", "Loading weights",
+     {"completed": 0, "total": 4}),
+    ("Loading np_cache checkpoint shards: 2/4", "Loading weights",
+     {"completed": 2, "total": 4}),
+    ("Multi-thread loading shards: 3/4", "Loading weights",
+     {"completed": 3, "total": 4}),
+    ("Loading model weights took 40.0 seconds", "Warming up", None),
+    ("Model loading took 14 GiB and 40 seconds", "Warming up", None),
+    ("GPU KV cache size: 66,901 tokens", "Warming up", None),
+    ("Using torch.compile for the model", "Compiling model", None),
+    ("Capturing CUDA graphs (mixed prefill-decode): 50%|xx| 4/8 [00:10]",
+     "Capturing CUDA graphs", {"completed": 4, "total": 8}),
+    ("Graph capturing finished in 20 secs", "Waiting for API readiness", None),
+    ("Application startup complete.", "Waiting for API readiness", None),
+    ("init engine (profile, create kv cache, warmup model) took 123 s",
+     "Waiting for API readiness", None),
+    ("Unrecognized future version output", "Starting engine", None),
+    ("Loading safetensors checkpoint shards: 2/0", "Loading weights", None),
+    ("Loading safetensors checkpoint shards: 9/8", "Loading weights", None),
+])
+def test_system_startup_measured_stages(api, starting, message, stage, progress):
+    c, _ = starting
+    c.output = f"2026-10-31T16:00:10.000000000Z {message}\n".encode()
+    s = api.get("/api/system").json()["vllm"]["startup"]
+    assert s["stage"] == stage
+    assert s["progress"] == progress
+    assert s["last_log_at"] == runner._timestamp("2026-10-31T16:00:10Z")
+
+
+def test_startup_ignores_previous_attempt_and_clears_completed_stage_counts(api, starting):
+    c, _ = starting
+    c.output = (
+        b"2026-10-31T16:00:00.000000000Z Capturing CUDA graphs: 8/8\n"
+        b"2026-10-31T16:00:10Z \x1b[32mLoading safetensors checkpoint shards: 1/8\x1b[0m"
+        b"\rLoading safetensors checkpoint shards: 8/8\n"
+    )
+    s = api.get("/api/system").json()["vllm"]["startup"]
+    assert s["stage"] == "Loading weights"
+    assert s["progress"] == {"completed": 8, "total": 8}
+    c.output += b"2026-10-31T16:00:15Z Loading model weights took 15 seconds\n"
+    s = api.get("/api/system").json()["vllm"]["startup"]
+    assert s["stage"] == "Warming up" and s["progress"] is None
+    c.output = b"2026-10-31T15:59:59Z Loading model weights took 15 seconds\n"
+    s = api.get("/api/system").json()["vllm"]["startup"]
+    assert s["stage"] == "Starting engine" and s["last_log_at"] is None
+
+
+def test_startup_reports_log_errors_without_breaking_system(api, starting):
+    c, _ = starting
+
+    def fail(**kwargs):
+        raise APIError("logging driver does not support reading")
+
+    c.logs = fail
+    s = api.get("/api/system").json()["vllm"]["startup"]
+    assert s["elapsed_seconds"] == 125
+    assert "Startup logs unavailable" in s["error"]
+    assert "logging driver" in s["error"]
+
+
+@pytest.mark.parametrize("state", ["created", "restarting", "exited", "dead"])
+def test_system_startup_nonrunning_states_do_not_read_old_logs(api, starting, state):
+    c, calls = starting
+    c.status = state
+    s = api.get("/api/system").json()["vllm"]["startup"]
+    if state in ("exited", "dead"):
+        assert s is None
+    else:
+        assert s["elapsed_seconds"] is None and s["started_at"] is None
+        assert s["stage"] == ("Container restarting" if state == "restarting" else "Waiting for container")
+    assert not calls
+
+
+def test_system_ready_clears_startup_without_reading_logs(api, starting, monkeypatch):
+    _, calls = starting
+    monkeypatch.setattr(runner.httpx, "get", lambda *a, **kw: SimpleNamespace(
+        status_code=200, json=lambda: {"data": [{"id": "model"}]},
+    ))
+    v = api.get("/api/system").json()["vllm"]
+    assert v["ready"] is True and v["startup"] is None
+    assert not calls
+
+
+@pytest.mark.parametrize("timestamp", ["", "not a timestamp", "0001-01-01T00:00:00Z"])
+def test_system_invalid_start_timestamp_is_explicit(api, starting, timestamp):
+    c, calls = starting
+    c.attrs["State"]["StartedAt"] = timestamp
+    s = api.get("/api/system").json()["vllm"]["startup"]
+    assert s["started_at"] is None and s["elapsed_seconds"] is None
+    assert s["error"] == "Container startup timestamp unavailable"
+    assert not calls
 
 
 def test_models_lists_cache_with_context_hint(api, monkeypatch):

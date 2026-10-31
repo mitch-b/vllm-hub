@@ -442,7 +442,7 @@ const store = {
 const S = {
   sys: null, local: [], jobs: [], rec: null, results: null, query: '', searching: false,
   tab: store.get('tab', 'library'), showAll: false, expanded: new Set(), dismissed: new Set(),
-  open: new Set(), loadingSince: null, runAfter: {}, prevJob: {}, chat: [], chatBusy: false, logsFor: null,
+  open: new Set(), sysAt: null, runAfter: {}, prevJob: {}, chat: [], chatBusy: false, logsFor: null,
 };
 
 /* ---------- Toasts & dialogs ---------- */
@@ -539,9 +539,10 @@ function renderRuntime() {
           <button class="btn" data-act="dismiss-rt">Clear</button>
           <button class="btn accent" data-act="restart">${icon('restart')}Restart</button></div></div>`;
     else if (p === 'loading') html = `<div class="rt-top"><div style="min-width:0">
-        <div class="eyebrow"><span class="dot pulse" style="background:var(--warn)"></span>Starting · <span id="elapsed">0s</span></div>
+        <div class="eyebrow"><span class="dot pulse" style="background:var(--warn)"></span>Starting · <span id="elapsed"></span></div>
         <h2 class="rt-title">${nameHtml(v.model)}</h2>
-        <div class="rt-sub">Loading weights and warming up. Large models take a few minutes.</div></div>
+        <div class="rt-sub" id="startupStage"></div>
+        <div class="rt-sub" id="startupActivity"></div></div>
         <div class="rt-actions">${toggles(['console', 'term', 'Console'])}
           <button class="btn danger" data-act="stop">${icon('stop')}Cancel</button></div></div>
         <div class="progress indeterminate"><i></i></div>`;
@@ -565,9 +566,20 @@ function renderRuntime() {
   }
   $('#pgHint').textContent = canChat ? servedName() : '';
   if (p === 'loading') {
-    S.loadingSince ??= Date.now();
-    const el = $('#elapsed'); if (el) el.textContent = fmtDur(Math.round((Date.now() - S.loadingSince) / 1000));
-  } else S.loadingSince = null;
+    const startup = v.startup, drift = S.sysAt ? Math.max(0, (Date.now() - S.sysAt) / 1000) : 0;
+    const elapsed = startup?.elapsed_seconds;
+    $('#elapsed').textContent = elapsed == null ? 'Waiting for container' : fmtDur(Math.floor(elapsed + drift));
+    const stage = startup?.stage || 'Waiting for startup details';
+    const count = startup?.progress;
+    $('#startupStage').textContent = stage + (count ? ` · ${count.completed} / ${count.total} ${stage === 'Loading weights' ? 'shards' : 'graphs'}` : '');
+    const quiet = startup?.last_log_at == null ? null
+      : Math.max(0, Math.floor(startup.started_at + elapsed - startup.last_log_at + drift));
+    $('#startupActivity').textContent = startup?.error || (quiet == null
+      ? 'Waiting for startup logs. Large models can take a few minutes; open Console for details.'
+      : `Last log activity ${fmtDur(quiet)} ago. ` + (quiet >= 30
+        ? 'No new logs; this alone does not mean it is stuck. Open Console for details.'
+        : 'Stages and counts come from vLLM logs, not an overall progress estimate.'));
+  }
 }
 
 const conn = Object.assign({ tab: 'cli', shell: 'pwsh', mode: 'env', autopilot: false, yolo: false, task: '' }, store.get('conn', {}));
@@ -754,6 +766,7 @@ async function refreshSystem() {
   try {
     const before = phase(), model = V().model;
     S.sys = await api('/api/system');
+    S.sysAt = Date.now();
     const now = phase();
     if (before === 'loading' && now === 'ready') toast('Model is ready', servedName(), 'ok');
     if (before === 'loading' && now === 'exited') { toast('vLLM stopped while starting', 'Opened the console so you can see why.', 'bad', 8000); S.open.add('console'); }
@@ -871,10 +884,9 @@ async function pull(id, runOpts = null) {
 
 async function startModel({ id, context, graphs, util, w }) {
   try {
-    S.loadingSince = Date.now();
     if (context) store.set('ctx.' + id, context); else localStorage.removeItem('hub.ctx.' + id);
     store.set('opts.' + id, { graphs, util });
-    S.sys.vllm = { ...V(), state: 'running', ready: false, model: id, context: context || '' };
+    S.sys.vllm = { ...V(), state: 'created', ready: false, model: id, context: context || '', startup: null };
     renderAll();
     const r = await post('/api/run', { repo_id: id, context: context || null, graphs, util: util || null, weights_gib: w || null });
     store.set('last', { id, context: r.context, graphs, util, w });

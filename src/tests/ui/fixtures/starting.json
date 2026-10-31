@@ -1,0 +1,9 @@
+{
+  "container_id": "fixture-startup-container",
+  "started_at": 1793462844,
+  "elapsed_seconds": 125,
+  "stage": "Loading weights",
+  "progress": {"completed": 3, "total": 8},
+  "last_log_at": 1793462965,
+  "error": null
+}
