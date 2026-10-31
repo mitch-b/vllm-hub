@@ -57,7 +57,11 @@ code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
 .gpu .meter { width: 92px; height: 6px; border-radius: 99px; background: var(--surface-3); overflow: hidden; }
 .gpu .meter > i { display: block; height: 100%; width: 0; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .6s ease; }
 .gpu b { color: var(--text); font-weight: 550; }
-@media (max-width: 720px) { .gpu .name { display: none; } }
+.gpu .host-short { display: none; }
+@media (max-width: 720px) {
+  .gpu .name, .gpu .host-full { display: none; }
+  .gpu .host-short { display: inline; }
+}
 .ver { display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 10px; border-radius: 99px; cursor: pointer;
   border: 1px solid var(--border); background: none; color: var(--subtle); font-size: 12px; font-family: var(--mono); }
 .ver:hover { color: var(--text); border-color: var(--border-strong); }
@@ -520,6 +524,20 @@ async function copy(text, label = 'Copied') {
 
 /* ---------- Derived state ---------- */
 const V = () => S.sys?.vllm || {};
+const nativeBackend = () => S.sys?.hosting?.backend === 'model-runner';
+const feature = name => S.sys?.hosting?.features?.[name] ?? !nativeBackend();
+const hasFit = () => inference().available && feature('gpu_fit');
+const inference = () => S.sys?.hosting?.local_inference || {
+  available: !!S.sys?.gpu && V().docker_ok !== false,
+  reason: V().docker_ok === false ? 'docker_unavailable' : 'gpu_unavailable',
+  message: 'Local inference requires an NVIDIA GPU visible to the hub and a working Docker runtime. Browsing and downloads remain available.',
+};
+const inferenceAttrs = () => inference().available ? '' : `disabled title="${esc(inference().message)}"`;
+const requireInference = () => {
+  if (inference().available) return true;
+  toast('Local inference unavailable', inference().message, 'info', 8000);
+  return false;
+};
 const phase = () => { const v = V();
   if (!S.sys) return 'init';
   if (v.docker_ok === false) return 'nodocker';
@@ -532,12 +550,26 @@ const activeJob = id => S.jobs.find(j => j.repo_id === id && (j.status === 'down
 const isLocal = id => !activeJob(id) && S.local.some(m => m.id === id);
 const jobPercent = j => Math.min(99, Math.floor(j.percent || 0));
 const servedName = () => V().served?.id || '';
+const modelUrl = id => id.startsWith('ai/') ? 'https://hub.docker.com/r/' + id.split(':')[0]
+  : 'https://huggingface.co/' + id.replace(/^hf\.co\//, '').split(':')[0];
 
 /* ---------- Render: top bar ---------- */
 function renderGpu() {
   const g = S.sys?.gpu, el = $('#gpu');
   if (!S.sys) return;
-  if (!g) { el.innerHTML = `<span class="badge warn">${icon('alert')}No GPU visible</span>`; return; }
+  if (nativeBackend()) {
+    const acceleration = S.sys.hosting.accelerator;
+    el.innerHTML = `<span class="badge"><span class="host-full">Model Runner${acceleration && acceleration !== 'Auto' ? ' · ' + esc(acceleration) : ''}</span><span class="host-short">${acceleration && acceleration !== 'Auto' ? esc(acceleration) : 'Model Runner'}</span></span>`;
+    el.title = 'Docker Model Runner automatically selects a host-native engine for the model.';
+    return;
+  }
+  if (!inference().available) {
+    el.innerHTML = '<span class="badge"><span class="host-full">Local inference unavailable</span><span class="host-short">No inference</span></span>';
+    el.title = inference().message;
+    return;
+  }
+  el.title = 'GPU memory in use';
+  if (!g) return;
   const used = g.used_mib / 1024, total = g.total_mib / 1024;
   el.innerHTML = `<span class="name"><b>${esc(g.name.replace(/^NVIDIA\s+(GeForce\s+)?/, ''))}</b></span>
     <span class="meter"><i style="width:${(100 * g.used_mib / g.total_mib).toFixed(1)}%"></i></span>
@@ -547,53 +579,59 @@ function renderGpu() {
 /* ---------- Render: runtime ---------- */
 let rtKey = '';
 function renderRuntime() {
-  const p = phase(), v = V();
-  const key = [p, v.model, v.context, servedName(), [...S.open].join()].join('|');
+  const p = phase(), v = V(), support = inference();
+  const key = [p, v.model, v.context, v.error, servedName(), S.sys?.hosting?.backend, support.available, support.reason, support.message, [...S.open].join()].join('|');
   if (key !== rtKey) {
     rtKey = key;
     const toggles = (...names) => names.map(([t, ic, label]) =>
       `<button class="btn ghost sm" data-act="toggle" data-target="${t}" aria-pressed="${S.open.has(t)}">${icon(ic)}${label}</button>`).join('');
     let html = '';
     if (p === 'init') html = `<div class="skeleton" style="height:90px"></div>`;
-    else if (p === 'nodocker') html = `<div class="empty"><div class="glyph" style="color:var(--bad)">${icon('alert')}</div><div>
-        <h2 class="rt-title" style="font-size:19px">Docker is unreachable</h2>
-        <div class="rt-sub">The hub needs the Docker socket to start vLLM. Check the <code>/var/run/docker.sock</code> mount in compose.yml.</div></div></div>`;
+    else if ((p === 'idle' || p === 'nodocker') && !support.available) html = `<div class="rt-top"><div style="min-width:0">
+        <h2 class="rt-title" style="font-size:19px">${support.reason === 'status_unavailable' ? 'Inference status unavailable' : support.reason === 'docker_unavailable' ? 'Docker is unreachable' : 'Set up local inference'}</h2>
+        <div class="rt-sub">${esc(support.message)}</div></div>
+        <div class="rt-actions"><button class="btn primary" data-act="tab" data-tab="discover">${icon('search')}Discover models</button>
+        ${S.local.length ? '<button class="btn" data-act="tab" data-tab="library">Open library</button>' : ''}
+        ${v.model ? `<button class="btn danger" data-act="stop">${icon('stop')}Stop</button>` : ''}</div></div>`;
     else if (p === 'idle') html = `<div class="rt-top"><div class="empty"><div class="glyph">${icon('cube')}</div><div>
         <h2 class="rt-title" style="font-size:19px">No model running</h2>
-        <div class="rt-sub">Pick a model from your library, or discover one that fits your GPU.</div></div></div>
+        <div class="rt-sub">${nativeBackend() ? 'Pick a model. Model Runner selects the native engine and manages host memory automatically.' : 'Pick a model from your library, or discover one that fits your GPU.'}</div></div></div>
         <div class="rt-actions">${S.local.length ? `<button class="btn" data-act="tab" data-tab="discover">Discover</button><button class="btn primary" data-act="tab" data-tab="library">Open library</button>`
           : `<button class="btn primary" data-act="tab" data-tab="discover">${icon('search')}Find a model</button>`}</div></div>`;
     else if (p === 'exited') html = `<div class="rt-top"><div style="min-width:0">
-        <div class="eyebrow"><span class="dot" style="background:var(--subtle)"></span>Stopped</div>
+        <div class="eyebrow"><span class="dot" style="background:var(--subtle)"></span>${v.error ? 'Start failed' : 'Stopped'}</div>
         <h2 class="rt-title">${nameHtml(v.model)}</h2>
-        <div class="rt-sub">Last ran with ${fmtCtx(+v.context)} context. The container exited; check the console if that was unexpected.</div></div>
-        <div class="rt-actions">${toggles(['console', 'term', 'Console'])}
+        <div class="rt-sub">${esc(v.error || `Last ran with ${fmtCtx(+v.context)} context. ${nativeBackend() ? 'The native engine stopped; check Docker Desktop Models for details.' : 'The container exited; check the console if that was unexpected.'}`)}</div></div>
+        <div class="rt-actions">${feature('logs') ? toggles(['console', 'term', 'Console']) : ''}
           <button class="btn" data-act="dismiss-rt">Clear</button>
-          <button class="btn accent" data-act="restart">${icon('restart')}Restart</button></div></div>`;
+          <button class="btn accent" data-act="restart" ${inferenceAttrs()}>${icon('restart')}Restart</button></div></div>`;
     else if (p === 'loading') html = `<div class="rt-top"><div style="min-width:0">
         <div class="eyebrow"><span class="dot pulse" style="background:var(--warn)"></span>Starting · <span id="elapsed"></span></div>
         <h2 class="rt-title">${nameHtml(v.model)}</h2>
         <div class="rt-sub" id="startupStage"></div>
         <div class="rt-sub" id="startupActivity"></div></div>
-        <div class="rt-actions">${toggles(['console', 'term', 'Console'])}
+        <div class="rt-actions">${feature('logs') ? toggles(['console', 'term', 'Console']) : ''}
           <button class="btn danger" data-act="stop">${icon('stop')}Cancel</button></div></div>
         <div class="progress indeterminate"><i></i></div>`;
     else if (p === 'ready') html = `<div class="rt-top"><div style="min-width:0">
         <div class="eyebrow"><span class="dot" style="background:var(--ok);box-shadow:0 0 0 4px var(--ok-soft)"></span>Serving</div>
         <h2 class="rt-title">${nameHtml(v.model)}</h2>
-        <div class="rt-sub"><span class="badge">${fmtCtx(+v.context)} context</span><span class="badge">port ${esc(v.port)}</span></div></div>
-        <div class="rt-actions">${toggles(['connect', 'term', 'Connect'], ['playground', 'chat', 'Try it'], ['activity', 'activity', 'Activity'], ['console', 'code', 'Console'])}
+        <div class="rt-sub"><span class="badge">${fmtCtx(+v.context)} context</span><span class="badge">port ${esc(v.port)}</span>${nativeBackend() ? `<span class="badge">${esc(v.engine || 'Model Runner')}</span>` : ''}</div></div>
+        <div class="rt-actions">${toggles(['connect', 'term', 'Connect'], ['playground', 'chat', 'Try it'])}${feature('activity') ? toggles(['activity', 'activity', 'Activity']) : ''}${feature('logs') ? toggles(['console', 'code', 'Console']) : ''}
           <button class="btn danger" data-act="stop">${icon('stop')}Stop</button></div></div>
         <div class="endpoint">
           <div class="field"><label>Base URL</label><code>${esc(v.url)}</code><button class="btn ghost icon sm" data-act="copy" data-text="${esc(v.url)}" aria-label="Copy base URL">${icon('copy')}</button></div>
           <div class="field"><label>Model</label><code>${esc(servedName())}</code><button class="btn ghost icon sm" data-act="copy" data-text="${esc(servedName())}" aria-label="Copy model name">${icon('copy')}</button></div>
         </div>`;
+    if (!support.available && ['loading', 'ready', 'exited'].includes(p)) {
+      html += `<div class="rt-sub">${esc(support.message)}</div>`;
+    }
     $('#rtMain').innerHTML = html;
     renderSnippets();
   }
   const canChat = p === 'ready';
   for (const t of ['connect', 'playground', 'activity', 'console']) {
-    const allowed = t === 'console' ? ['loading', 'ready', 'exited'].includes(p) : canChat;
+    const allowed = t === 'console' ? feature('logs') && ['loading', 'ready', 'exited'].includes(p) : t === 'activity' ? canChat && feature('activity') : canChat;
     $('#' + t).hidden = !(allowed && S.open.has(t));
   }
   $('#pgHint').textContent = canChat ? servedName() : '';
@@ -606,7 +644,7 @@ function renderRuntime() {
     $('#startupStage').textContent = stage + (count ? ` · ${count.completed} / ${count.total} ${stage === 'Loading weights' ? 'shards' : 'graphs'}` : '');
     const quiet = startup?.last_log_at == null ? null
       : Math.max(0, Math.floor(startup.started_at + elapsed - startup.last_log_at + drift));
-    $('#startupActivity').textContent = startup?.error || (quiet == null
+    $('#startupActivity').textContent = startup?.message || startup?.error || (quiet == null
       ? 'Waiting for startup logs. Large models can take a few minutes; open Console for details.'
       : `Last log activity ${fmtDur(quiet)} ago. ` + (quiet >= 30
         ? 'No new logs; this alone does not mean it is stuck. Open Console for details.'
@@ -614,7 +652,8 @@ function renderRuntime() {
   }
 }
 
-const conn = Object.assign({ tab: 'cli', shell: 'pwsh', mode: 'env', autopilot: false, yolo: false, task: '' }, store.get('conn', {}));
+const clientPlatform = navigator.userAgentData?.platform || navigator.platform || '';
+const conn = Object.assign({ tab: 'cli', shell: /win/i.test(clientPlatform) ? 'pwsh' : 'bash', mode: 'env', autopilot: false, yolo: false, task: '' }, store.get('conn', {}));
 const saveConn = () => store.set('conn', { ...conn, task: '' });
 function tokenLimits() {
   // Copilot sends max_tokens = output limit, and vLLM rejects prompt + max_tokens > context, so they must sum to it.
@@ -724,13 +763,13 @@ function renderLibrary() {
     const status = current ? (p === 'ready' ? '<span class="badge ok"><span class="dot"></span>Serving</span>' : '<span class="badge warn"><span class="dot pulse"></span>Starting</span>') : '';
     const last = store.get('ctx.' + m.id, null);
     rows.push(`<div class="item">${avatar(m.id)}<div class="main"><div class="title">${nameHtml(m.id)}</div>
-      <div class="meta"><span>${m.size_gib} GB</span>${last ? `<span class="sep"></span><span>${fmtCtx(last)} context</span>` : ''}${m.last_used ? `<span class="sep"></span><span>used ${fmtAgo(m.last_used)}</span>` : ''}</div></div>
+      <div class="meta"><span>${m.size_gib == null ? 'Size unknown' : m.size_gib + ' GB'}</span>${last ? `<span class="sep"></span><span>${fmtCtx(last)} context</span>` : ''}${m.last_used ? `<span class="sep"></span><span>used ${fmtAgo(m.last_used)}</span>` : ''}</div></div>
       <div class="actions">${status}
-        ${current ? `<button class="btn sm danger" data-act="stop">${icon('stop')}Stop</button>` : `<button class="btn sm" data-act="run" data-id="${esc(m.id)}" data-w="${m.size_gib}">${icon('play')}Run</button>`}
+        ${current ? `<button class="btn sm danger" data-act="stop">${icon('stop')}Stop</button>` : `<button class="btn sm" data-act="run" data-id="${esc(m.id)}" data-w="${m.size_gib}" ${inferenceAttrs()}>${icon('play')}Run</button>`}
         <button class="btn ghost icon sm" data-act="menu-local" data-id="${esc(m.id)}" aria-label="More actions">${icon('more')}</button></div></div>`);
   }
   const html = rows.join('') || `<div class="blank">${icon('cube').replace('<svg', '<svg style="width:28px;height:28px;color:var(--subtle)"')}
-    <b>Your library is empty</b><span>Download a model to run it locally.</span>
+    <b>Your library is empty</b><span>${inference().available ? 'Download a model to run it locally.' : 'Download models to keep them in your local cache.'}</span>
     <button class="btn primary" data-act="tab" data-tab="discover">${icon('search')}Discover models</button></div>`;
   if (html !== libHtml) { libHtml = html; $('#library').innerHTML = html; }
   $('#libCount').textContent = models.length + jobs.length;
@@ -742,16 +781,17 @@ const VERDICT = { fits: ['ok', 'Fits'], tight: ['warn', 'Tight fit'], too_big: [
 function renderDiscover() {
   const searching = !!S.query;
   const src = searching ? S.results : S.rec;
-  $('#discLabel').textContent = searching ? (S.searching ? 'Searching…' : `Results for "${S.query}"`) : `Recommended for your ${S.sys?.gpu ? S.sys.gpu.name.replace(/^NVIDIA\s+(GeForce\s+)?/, '') : 'GPU'}`;
+  $('#discLabel').textContent = searching ? (S.searching ? 'Searching…' : `Results for "${S.query}"`) : nativeBackend() ? 'Models for Docker Model Runner' : hasFit() ? `Recommended for your ${S.sys.gpu.name.replace(/^NVIDIA\s+(GeForce\s+)?/, '')}` : 'Model catalog · local inference unavailable';
+  $('#showAll').disabled = !hasFit();
   let html;
   if (!src || (S.searching && !S.results)) html = '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>';
   else {
     const bad = m => m.verdict === 'too_big' || m.verdict === 'unsupported';
-    const shown = S.showAll ? src : src.filter(m => !bad(m));
+    const shown = S.showAll || !hasFit() ? src : src.filter(m => !bad(m));
     const hidden = src.length - shown.length;
     $('#hiddenCount').textContent = hidden && !S.showAll ? ` (${hidden})` : '';
     const rows = [];
-    const direct = /^[\w.-]+\/[\w.-]+$/.test(S.query) && !src.some(m => m.id.toLowerCase() === S.query.toLowerCase());
+    const direct = (nativeBackend() ? /^(?:ai\/|hf.co\/)[\w./:-]+$/ : /^[\w.-]+\/[\w.-]+$/).test(S.query) && !src.some(m => m.id.toLowerCase() === S.query.toLowerCase());
     if (direct) rows.push(`<div class="item">${avatar(S.query)}<div class="main"><div class="title">${nameHtml(S.query)}</div>
       <div class="meta"><span>Download this repo directly</span></div></div>
       <div class="actions"><button class="btn sm" data-act="pull" data-id="${esc(S.query)}">${icon('down')}Download</button></div></div>`);
@@ -761,14 +801,15 @@ function renderDiscover() {
   if (html !== discHtml) { discHtml = html; $('#discover').innerHTML = html; }
 }
 function discoverRow(m, disabled) {
-  const [cls, label] = VERDICT[m.verdict] || ['', ''];
+  const [cls, label] = hasFit() ? VERDICT[m.verdict] || ['', ''] : ['', ''];
   const job = activeJob(m.id), local = isLocal(m.id), open = S.expanded.has(m.id);
   const size = m.weights_gib ?? m.size_gib;
   const meta = [size ? `${size} GB` : '', m.quant, m.downloads != null ? `${fmtNum(m.downloads)} downloads` : '']
     .filter(Boolean).map(x => `<span>${esc(x)}</span>`).join('<span class="sep"></span>');
   let actions;
-  if (local) actions = `<span class="badge">In library</span><button class="btn sm" data-act="run" data-id="${esc(m.id)}" data-w="${size ?? ''}">${icon('play')}Run</button>`;
+  if (local) actions = `<span class="badge">In library</span><button class="btn sm" data-act="run" data-id="${esc(m.id)}" data-w="${size ?? ''}" ${inferenceAttrs()}>${icon('play')}Run</button>`;
   else if (job) actions = `<span class="badge accent">${job.finalizing ? 'Finalizing snapshot…' : job.total ? jobPercent(job) + '%' : 'Queued'}</span>`;
+  else if (!inference().available) actions = `<button class="btn sm" data-act="pull" data-id="${esc(m.id)}">${icon('down')}Download</button>`;
   else actions = `<button class="btn ghost icon sm" data-act="pull" data-id="${esc(m.id)}" ${disabled ? 'disabled' : ''} aria-label="Download only" title="Download only">${icon('down')}</button>
     <button class="btn sm" data-act="run" data-id="${esc(m.id)}" data-w="${size ?? ''}" ${disabled ? 'disabled' : ''}>${icon('play')}Run</button>`;
   return `<div class="item ${open ? 'expanded' : ''}">${avatar(m.id)}
@@ -777,12 +818,12 @@ function discoverRow(m, disabled) {
         <button class="btn ghost sm" style="height:22px;padding:0 6px;font-size:12px" data-act="expand" data-id="${esc(m.id)}" aria-expanded="${open}">Details${icon('chev', 'chev').replace('<svg', '<svg style="width:12px;height:12px"')}</button></div>
       ${job ? `<div class="progress bar"><i style="width:${job.percent || 0}%"></i></div>` : ''}</div>
     <div class="actions">${actions}</div>
-    ${open ? `<div class="details"><div>${esc(m.reason || '')}</div><dl>
+    ${open ? `<div class="details"><div>${esc(nativeBackend() ? m.reason || 'Model Runner manages native engine compatibility and host memory.' : inference().available ? m.reason || '' : 'GPU fit cannot be assessed for local inference in this environment.')}</div><dl>
       <div><dt>Weights</dt><dd>${size ? size + ' GB' : 'unknown'}</dd></div>
-      <div><dt>Headroom</dt><dd>${m.headroom_gib != null ? m.headroom_gib + ' GB' : '—'}</dd></div>
+      <div><dt>Headroom</dt><dd>${hasFit() && m.headroom_gib != null ? m.headroom_gib + ' GB' : '—'}</dd></div>
       <div><dt>Format</dt><dd>${esc(m.quant || '—')}</dd></div>
       <div><dt>Likes</dt><dd>${m.likes != null ? fmtNum(m.likes) : '—'}</dd></div></dl>
-      <div><a class="btn ghost sm" style="padding-left:0" href="https://huggingface.co/${esc(m.id)}" target="_blank" rel="noopener">${icon('ext')}View on Hugging Face</a></div></div>` : ''}
+      <div><a class="btn ghost sm" style="padding-left:0" href="${esc(modelUrl(m.id))}" target="_blank" rel="noopener">${icon('ext')}${m.id.startsWith('ai/') ? 'View on Docker Hub' : 'View on Hugging Face'}</a></div></div>` : ''}
   </div>`;
 }
 
@@ -792,20 +833,48 @@ function renderTabs() {
     $('#pane-' + t).hidden = S.tab !== t;
   }
 }
-function renderAll() { renderGpu(); renderRuntime(); renderLibrary(); renderDiscover(); renderTabs(); }
+function renderAll() {
+  renderGpu(); renderRuntime(); renderLibrary(); renderDiscover(); renderTabs();
+  $('#runGo').disabled = !inference().available;
+}
 
 /* ---------- Data ---------- */
 async function refreshSystem() {
   try {
     const before = phase();
+    const previousBackend = S.sys?.hosting?.backend;
+    const couldRun = inference().available;
     S.sys = await api('/api/system');
     S.sysAt = Date.now();
+    if (couldRun && !inference().available && Object.keys(S.runAfter).length) {
+      S.runAfter = {};
+      toast('Queued starts cancelled', 'Local inference is no longer available. Downloads will continue.', 'info', 8000);
+    }
     const now = phase();
     if (before === 'loading' && now === 'ready') toast('Model is ready', servedName(), 'ok');
-    if (before === 'loading' && now === 'exited') { toast('vLLM stopped while starting', 'Opened the console so you can see why.', 'bad', 8000); S.open.add('console'); }
-    if (['loading', 'ready', 'exited'].includes(now) && (S.logsFor !== logKey() || !logAbort)) streamLogs();
-    if (now === 'idle') { logAbort?.abort(); logAbort = null; S.logsFor = null; }
-  } catch { S.sys = S.sys || { vllm: { docker_ok: false } }; }
+    if (before === 'loading' && now === 'exited') {
+      if (nativeBackend()) toast('Model did not start', V().error || 'Check Docker Desktop Models for details.', 'bad', 8000);
+      else { toast('vLLM stopped while starting', 'Opened the console so you can see why.', 'bad', 8000); S.open.add('console'); }
+    }
+    if (feature('logs') && ['loading', 'ready', 'exited'].includes(now) && (S.logsFor !== logKey() || !logAbort)) streamLogs();
+    if (now === 'idle' || !feature('logs')) { logAbort?.abort(); logAbort = null; S.logsFor = null; }
+    if (previousBackend !== undefined && previousBackend !== S.sys.hosting?.backend) {
+      S.query = ''; $('#q').value = ''; S.results = null;
+      await loadLocal(); loadRecommended();
+    }
+  } catch (error) {
+    S.sys = {
+      ...S.sys, vllm: { ...V(), state: 'unavailable', ready: false },
+      hosting: { ...S.sys?.hosting, local_inference: {
+        available: false, reason: 'status_unavailable', message: error.message,
+      } },
+    };
+    if (Object.keys(S.runAfter).length) {
+      S.runAfter = {};
+      toast('Queued starts cancelled', 'Inference status is unavailable. Downloads will continue.', 'info', 8000);
+    }
+    logAbort?.abort(); logAbort = null; S.logsFor = null;
+  }
   renderAll();
 }
 async function loadLocal() {
@@ -910,11 +979,13 @@ function onQuery() {
 
 /* ---------- Actions ---------- */
 async function pull(id, runOpts = null) {
+  if (runOpts && !requireInference()) return;
   const seq = stopSeq;
   try {
     const j = await post('/api/pull', { repo_id: id });
     S.prevJob[j.id] = j.status;
     const willRun = runOpts && seq === stopSeq;
+    if (willRun) runOpts.id = j.repo_id;
     if (willRun) S.runAfter[j.id] = runOpts;
     toast(willRun ? 'Downloading, will run when done' : 'Download started', id, 'info', 2600);
     S.tab = 'library'; store.set('tab', 'library');
@@ -924,6 +995,7 @@ async function pull(id, runOpts = null) {
 
 let runSeq = 0, stopSeq = 0;
 async function startModel({ id, context, graphs, util, w }) {
+  if (!requireInference()) return;
   const seq = ++runSeq;
   try {
     if (context) store.set('ctx.' + id, context); else localStorage.removeItem('hub.ctx.' + id);
@@ -939,15 +1011,18 @@ async function startModel({ id, context, graphs, util, w }) {
 
 const CTX_OPTS = [0, 8192, 16384, 32768, 65536, 131072];
 function openRunDialog(id, w) {
+  if (!requireInference()) return;
   const d = $('#runDlg'), v = V(), local = isLocal(id);
   const saved = store.get('ctx.' + id, null), opts = store.get('opts.' + id, {});
   const lm = S.local.find(m => m.id === id);
-  let ctx = lm?.context_learned && saved && saved < lm.context_hint ? 0 : saved ?? (lm?.context_hint >= 16384 ? 0 : 32768);
+  let ctx = lm?.context_learned && saved && saved < lm.context_hint ? 0 : saved ?? (nativeBackend() || lm?.context_hint >= 16384 ? 0 : 32768);
   const autoUtil = S.sys?.recommended_util ?? 0.9;
   $('#runName').innerHTML = `<span class="mono">${esc(id)}</span>`;
-  $('#ctxHint').textContent = lm?.context_hint ? `auto ${lm.context_learned ? '=' : '≈'} ${fmtCtx(lm.context_hint)}${lm.context_learned ? ' (measured)' : ''}` : '';
+  $('#ctxHint').textContent = lm?.context_hint ? nativeBackend() ? `default ${fmtCtx(lm.context_hint)}` : `auto ${lm.context_learned ? '=' : '≈'} ${fmtCtx(lm.context_hint)}${lm.context_learned ? ' (measured)' : ''}` : '';
   const seg = $('#ctxSeg');
-  const drawSeg = () => seg.innerHTML = CTX_OPTS.map(n => `<button type="button" role="radio" aria-checked="${n === ctx}" data-v="${n}">${n ? fmtCtx(n) : 'Auto'}</button>`).join('');
+  const contexts = nativeBackend() ? [0, 4096, 8192, 16384, 32768].filter(n => lm?.max_context == null || n <= lm.max_context) : CTX_OPTS;
+  if (!contexts.includes(ctx)) ctx = 0;
+  const drawSeg = () => seg.innerHTML = contexts.map(n => `<button type="button" role="radio" aria-checked="${n === ctx}" data-v="${n}">${n ? fmtCtx(n) : 'Auto'}</button>`).join('');
   drawSeg();
   seg.onclick = e => { const b = e.target.closest('button'); if (b) { ctx = +b.dataset.v; drawSeg(); } };
   $('#graphs').checked = !!opts.graphs;
@@ -955,6 +1030,7 @@ function openRunDialog(id, w) {
   const utilLabel = () => $('#utilVal').textContent = `${Math.round(util.value * 100)}%` + (+util.value === autoUtil ? ' (auto)' : '');
   util.oninput = utilLabel; utilLabel();
   d.querySelector('details').open = !!(opts.graphs || (opts.util && opts.util !== autoUtil));
+  d.querySelector('details').hidden = !feature('cuda_options');
   const notes = [];
   if (!local) notes.push(`<div class="note info">${icon('down')}<div>Not downloaded yet${w ? ` (${w} GB)` : ''}. It will download first, then start.</div></div>`);
   if (v.model && v.model !== id && (phase() === 'ready' || phase() === 'loading')) notes.push(`<div class="note">${icon('alert')}<div>This stops <b>${esc(split(v.model)[1])}</b>, which is running now.</div></div>`);
@@ -966,7 +1042,7 @@ function openRunDialog(id, w) {
   d.addEventListener('close', () => {
     if (d.returnValue !== 'run') return;
     const u = +util.value;
-    const o = { id, context: ctx || null, graphs: $('#graphs').checked, util: u === autoUtil ? null : u, w: w || null };
+    const o = { id, context: ctx || null, graphs: feature('cuda_options') && $('#graphs').checked, util: !feature('cuda_options') || u === autoUtil ? null : u, w: w || null };
     local ? startModel(o) : pull(id, o);
   }, { once: true });
 }
@@ -1118,9 +1194,9 @@ document.addEventListener('click', e => {
     case 'expand': S.expanded.has(id) ? S.expanded.delete(id) : S.expanded.add(id); renderDiscover(); break;
     case 'menu-local': { const m = S.local.find(x => x.id === id);
       openMenu(b, [
-        { icon: 'sliders', label: 'Run with options…', run: () => openRunDialog(id, m?.size_gib) },
+        ...(inference().available ? [{ icon: 'sliders', label: 'Run with options…', run: () => openRunDialog(id, m?.size_gib) }] : []),
         { icon: 'copy', label: 'Copy model ID', run: () => copy(id) },
-        { icon: 'ext', label: 'Open on Hugging Face', href: 'https://huggingface.co/' + id },
+        { icon: 'ext', label: id.startsWith('ai/') ? 'Open on Docker Hub' : 'Open on Hugging Face', href: modelUrl(id) },
         '-',
         { icon: 'trash', label: 'Delete from disk', danger: true, run: () => deleteModel(id) },
       ]); break; }

@@ -118,14 +118,14 @@ def _run(job: Job) -> None:
         job.finished = time.time()
 
 
-def start(repo_id: str) -> Job:
+def start(repo_id: str, worker=None) -> Job:
     with _lock:
         for j in _jobs.values():
             if j.repo_id == repo_id and j.status in ("queued", "downloading"):
                 return j
         job = Job(repo_id)
         _jobs[job.id] = job
-    threading.Thread(target=_run, args=(job,), daemon=True).start()
+    threading.Thread(target=worker or _run, args=(job,), daemon=True).start()
     return job
 
 
@@ -164,8 +164,12 @@ def delete_cached(repo_id: str) -> bool:
     if not hashes:
         return False
     info.delete_revisions(*hashes).execute()
+    forget_completed(repo_id)
+    return True
+
+
+def forget_completed(repo_id: str) -> None:
     # Completed jobs must not reintroduce a deleted model during UI reconciliation.
     with _lock:
         for job_id in [j.id for j in _jobs.values() if j.repo_id == repo_id and j.status == "done"]:
             del _jobs[job_id]
-    return True

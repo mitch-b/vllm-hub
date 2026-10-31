@@ -7,9 +7,10 @@ services:
     ports:
       # UI + API. Localhost by default because the app controls Docker; set HUB_BIND=0.0.0.0 for LAN access.
       - "${HUB_BIND:-127.0.0.1}:7860:7860"
-    gpus: all # only so the hub can read GPU/VRAM info via nvidia-smi
     environment:
       NVIDIA_DRIVER_CAPABILITIES: utility
+      HUB_MODEL_RUNNER_URL: ${HUB_MODEL_RUNNER_URL:-}
+      HUB_MODEL_RUNNER_PUBLIC_URL: ${HUB_MODEL_RUNNER_PUBLIC_URL:-http://localhost:12434/engines/v1}
       HF_TOKEN: ${HF_TOKEN:-}
       HF_CACHE_SOURCE: ${HF_CACHE_SOURCE:-vllm-hub-hf-cache}
       VLLM_IMAGE: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
@@ -21,6 +22,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - vllm-hub-state:/state # learned per-model context capacity
     networks: [vllm-hub-net]
+    extra_hosts:
+      - "model-runner.docker.internal:host-gateway"
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
 volumes:

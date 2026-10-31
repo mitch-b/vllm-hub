@@ -1,0 +1,26 @@
+{
+  "system": {
+    "gpu": null,
+    "recommended_util": null,
+    "image": "vllm/vllm-openai:latest",
+    "hosting": {
+      "backend": "model-runner",
+      "accelerator": "Metal",
+      "local_inference": {"available": true, "reason": null, "message": null},
+      "features": {"cuda_options": false, "logs": false, "activity": false, "gpu_fit": false}
+    },
+    "vllm": {
+      "docker_ok": true, "state": "stopped", "ready": false, "model": null,
+      "context": null, "port": 12434, "url": "http://localhost:12434/engines/v1",
+      "backend": "model-runner", "engine": null, "served": null, "startup": null
+    }
+  },
+  "models": [
+    {"id": "ai/qwen3:0.6B-Q4_K_M", "size_gib": 0.45, "last_used": 0, "context_hint": 8192, "max_context": 32768},
+    {"id": "ai/qwen3:8B-Q4_K_M", "size_gib": 4.68, "last_used": 0, "context_hint": 8192, "max_context": 32768}
+  ],
+  "recommended": [
+    {"id": "ai/qwen3:0.6B-Q4_K_M", "size_gib": 0.45, "quant": "GGUF Q4_K_M", "verdict": "unknown", "reason": "Model Runner selects the native engine and manages host memory."},
+    {"id": "ai/qwen3:8B-Q4_K_M", "size_gib": 4.68, "quant": "GGUF Q4_K_M", "verdict": "unknown", "reason": "Model Runner selects the native engine and manages host memory."}
+  ]
+}

@@ -8,7 +8,7 @@ import pytest
 from docker.errors import APIError, NotFound
 from fastapi.testclient import TestClient
 
-from app import downloads, main, runner
+from app import downloads, hosting, main, model_runner, runner
 
 GPU = {"name": "Test GPU", "total_mib": 24564, "used_mib": 1000, "driver": "1", "gpu_count": 1}
 INDEX = Path(main.STATIC / "index.html").read_text(encoding="utf-8")
@@ -20,8 +20,12 @@ class FakeContainers:
 
 
 @pytest.fixture
-def api(monkeypatch):
+def api(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "gpu_info", lambda: GPU)
+    monkeypatch.setattr(hosting, "gpu_info", lambda: main.gpu_info())
+    monkeypatch.setattr(model_runner, "discover", lambda: None)
+    monkeypatch.setattr(model_runner, "STATE", tmp_path / "model-runner.json")
+    monkeypatch.setattr(model_runner, "_selection", {})
     monkeypatch.setattr(runner, "client", lambda: SimpleNamespace(containers=FakeContainers()))
     return TestClient(main.app)
 
@@ -42,9 +46,10 @@ def test_system_shape(api):
     assert 0.3 <= body["recommended_util"] <= 0.95
     assert body["vllm"] == {"docker_ok": True, "state": "stopped", "model": None, "ready": False}
     assert body["image"]
+    assert body["hosting"]["local_inference"] == {"available": True, "reason": None, "message": None}
 
 
-def test_system_without_docker_or_gpu(monkeypatch):
+def test_system_without_docker_or_gpu(api, monkeypatch):
     def boom():
         raise RuntimeError("docker socket missing")
 
@@ -53,6 +58,105 @@ def test_system_without_docker_or_gpu(monkeypatch):
     body = TestClient(main.app).get("/api/system").json()
     assert body["gpu"] is None and body["recommended_util"] is None
     assert body["vllm"]["docker_ok"] is False
+
+
+def test_system_without_gpu_with_docker(api, monkeypatch):
+    monkeypatch.setattr(main, "gpu_info", lambda: None)
+    body = api.get("/api/system").json()
+    assert body["gpu"] is None and body["recommended_util"] is None
+    assert body["vllm"]["docker_ok"] is True
+    assert body["hosting"]["local_inference"]["reason"] == "runtime_unavailable"
+    assert api.get("/healthz").json() == {"ok": True}
+    assert api.get("/").status_code == 200
+
+
+def test_run_without_gpu_preserves_existing_container(api, monkeypatch):
+    monkeypatch.setattr(runner, "gpu_info", lambda: None)
+
+    def unexpected_client():
+        pytest.fail("An unsupported start must not touch Docker or stop a running model")
+
+    monkeypatch.setattr(runner, "client", unexpected_client)
+    response = api.post("/api/run", json={"repo_id": "org/model"})
+    assert response.status_code == 409
+    assert "NVIDIA GPU" in response.json()["detail"]
+    assert "Model Runner" in response.json()["detail"]
+
+
+@pytest.mark.parametrize("gpu,docker_ok,reason", [
+    (None, True, "runtime_unavailable"),
+    (GPU, False, "docker_unavailable"),
+    (None, False, "docker_unavailable"),
+    (GPU, True, None),
+])
+def test_hosting_capabilities(api, monkeypatch, gpu, docker_ok, reason):
+    monkeypatch.setattr(main, "gpu_info", lambda: gpu)
+    monkeypatch.setattr(runner, "status", lambda: {"docker_ok": docker_ok})
+    support = api.get("/api/system").json()["hosting"]["local_inference"]
+    assert support["available"] is (reason is None)
+    assert support["reason"] == reason
+    assert bool(support["message"]) is (reason is not None)
+
+
+def test_run_with_no_available_backend_is_actionable(api, monkeypatch):
+    monkeypatch.setattr(main, "gpu_info", lambda: None)
+    response = api.post("/api/run", json={"repo_id": "org/model"})
+    assert response.status_code == 409
+    assert "Settings > AI" in response.json()["detail"]
+
+
+@pytest.fixture
+def native_api(api, monkeypatch):
+    monkeypatch.setattr(hosting, "detect", lambda: {
+        "backend": "model-runner", "gpu": None, "accelerator": "Metal",
+        "local_inference": {"available": True, "reason": None, "message": None},
+    })
+    monkeypatch.setattr(model_runner, "selected_model", lambda: "fixture/model")
+    return api
+
+
+@pytest.mark.parametrize("method,path,handler,body,result", [
+    ("GET", "/api/models", "models", None, [{"id": "fixture/model"}]),
+    ("GET", "/api/recommended", "recommended", None, [{"id": "fixture/model"}]),
+    ("GET", "/api/search?q=coder", "search", None, [{"id": "fixture/model"}]),
+    ("DELETE", "/api/models/fixture/model", "delete", None, {"ok": True}),
+    ("POST", "/api/pull", "pull", {"repo_id": "fixture/model"}, {"id": "fixture-job"}),
+    ("POST", "/api/run", "start", {"repo_id": "fixture/model"}, {"backend": "model-runner"}),
+    ("POST", "/api/stop", "stop", None, {"ok": True}),
+    ("POST", "/api/chat", "chat", {"messages": [{"role": "user", "content": "hi"}]}, {"content": "answer"}),
+])
+def test_native_api_dispatch(native_api, monkeypatch, method, path, handler, body, result):
+    calls = []
+
+    def operation(*args):
+        calls.append(args)
+        return SimpleNamespace(view=lambda: result) if handler == "pull" else result
+
+    monkeypatch.setattr(model_runner, handler, operation)
+    response = native_api.request(method, path, json=body)
+    assert response.status_code == 200 and response.json() == result
+    assert len(calls) == 1
+
+
+def test_native_api_system_and_diagnostics(native_api, monkeypatch):
+    runtime = {"docker_ok": True, "state": "stopped", "backend": "model-runner"}
+    monkeypatch.setattr(model_runner, "status", lambda: runtime)
+    body = native_api.get("/api/system").json()
+    assert body["vllm"] == runtime
+    assert body["hosting"]["accelerator"] == "Metal"
+    assert not any(body["hosting"]["features"].values())
+    assert native_api.get("/api/activity").json()["supported"] is False
+    assert "Docker Desktop" in native_api.get("/api/logs").text
+
+
+def test_native_status_connection_failure_is_explicit(native_api, monkeypatch):
+    def disconnected():
+        raise RuntimeError("Native management connection lost")
+
+    monkeypatch.setattr(model_runner, "status", disconnected)
+    response = native_api.get("/api/system")
+    assert response.status_code == 502
+    assert "Native management connection lost" in response.json()["detail"]
 
 
 @pytest.fixture

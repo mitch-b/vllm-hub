@@ -42,5 +42,10 @@
     "kv_tokens": 66901,
     "url": "http://localhost:8000/v1"
   },
-  "image": "vllm/vllm-openai:latest"
+  "image": "vllm/vllm-openai:latest",
+  "hosting": {
+    "backend": "cuda",
+    "local_inference": {"available": true, "reason": null, "message": null},
+    "features": {"cuda_options": true, "logs": true, "activity": true, "gpu_fit": true}
+  }
 }
