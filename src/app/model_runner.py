@@ -8,11 +8,13 @@ import os
 import re
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event, RLock, Thread
 from urllib.parse import quote
 
 import httpx
+from huggingface_hub.errors import HfHubHTTPError
 
 from . import downloads, hf
 
@@ -22,7 +24,16 @@ _selection: dict | None = None
 _cancel: Event | None = None
 _discovery: dict = {"at": 0.0, "connection": None, "error": None}
 _discovery_lock = RLock()
-RECOMMENDED = ["ai/qwen3:0.6B-Q4_K_M", "ai/qwen3:8B-Q4_K_M"]
+RECOMMENDED = {
+    "Qwen/Qwen3-8B-GGUF": "General chat · established baseline",
+    "unsloth/Qwen3.5-9B-GGUF": "General chat and coding · recent engine required",
+    "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF": "Coding · smaller, faster starting point",
+    "Qwen/Qwen2.5-Coder-14B-Instruct-GGUF": "Coding · larger specialist",
+    "Qwen/Qwen3-14B-GGUF": "General chat · larger alternative",
+    "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF": "Agentic coding · large weights; allow extra memory for context",
+}
+OFFICIAL_PUBLISHERS = {"Qwen", "google", "meta-llama", "mistralai", "deepseek-ai", "microsoft", "HuggingFaceTB"}
+CONVERTERS = {"unsloth", "ggml-org"}
 logger = logging.getLogger(__name__)
 
 
@@ -86,6 +97,9 @@ def _size_gib(size: str) -> float | None:
 
 def _reference(value: str) -> str:
     value = value.removeprefix("docker.io/")
+    if value.startswith(("hf.co/", "huggingface.co/")):
+        repo, separator, tag = value.split("/", 1)[1].partition(":")
+        value = "hf.co/" + repo.lower() + (separator + tag if separator else "")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/:-]*", value) or any(
         part in ("", ".", "..") for part in value.split("/")
     ):
@@ -120,21 +134,55 @@ def models() -> list[dict]:
     return [_model(m) for m in request(connection(), "GET", "models").json()]
 
 
+def _source(repo: str) -> dict:
+    publisher = repo.split("/", 1)[0]
+    kind = "official" if publisher in OFFICIAL_PUBLISHERS else "converter" if publisher in CONVERTERS else "community"
+    labels = {"official": "Official publisher", "converter": "Established GGUF converter",
+              "community": "Community upload"}
+    return {"publisher": publisher, "source_kind": kind, "source_label": labels[kind]}
+
+
+def _q4_files(files) -> list:
+    matching = [f for f in files if re.search(r"(?i)(?:^|[-_/])q4_k_m(?:[-.]|$)", f.rfilename)
+                and f.rfilename.lower().endswith(".gguf") and "mmproj" not in f.rfilename.lower()]
+    # Some publishers provide both a merged file and its shards. Count one representation.
+    merged = [f for f in matching if not re.search(r"-\d{5}-of-\d{5}\.gguf$", f.rfilename)]
+    return merged or matching
+
+
 def recommended() -> list[dict]:
-    conn = connection()
-    return [_model(request(conn, "GET", _model_path(ref), params={"remote": "true"}).json(), ref)
-            for ref in RECOMMENDED]
+    def entry(repo):
+        row = {"id": _reference(f"hf.co/{repo}:Q4_K_M"), "quant": "GGUF Q4_K_M", "backend": "model-runner",
+               "verdict": "unknown", "use_case": RECOMMENDED[repo], **_source(repo)}
+        try:
+            info = hf.api.model_info(repo, files_metadata=True)
+            files = _q4_files(info.siblings or [])
+            if not files:
+                raise ValueError("Publisher no longer provides Q4_K_M GGUF weights")
+            size = sum(f.size for f in files) if all(f.size is not None for f in files) else None
+            row.update(size_gib=round(size / 2**30, 2) if size is not None else None,
+                       gated=bool(info.gated), source_model=(info.card_data or {}).get("base_model"),
+                       reason=f"{RECOMMENDED[repo]}. Weights only: leave memory for macOS and context. "
+                              "Model Runner selects the native engine; no host-memory fit is claimed.")
+        except (httpx.HTTPError, HfHubHTTPError, ValueError) as exc:
+            row.update(verdict="unsupported", reason=f"Could not verify this recommendation: {exc}")
+        return row
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        return list(pool.map(entry, RECOMMENDED))
 
 
 def search(query: str, limit: int = 25) -> list[dict]:
     # GGUF is portable across Model Runner's Metal/CUDA/CPU engines.
     results = hf.api.list_models(search=query, filter="gguf", pipeline_tag="text-generation",
-                                 sort="downloads", limit=min(limit, 50))
-    return [{
-        "id": "hf.co/" + m.id + ":Q4_K_M", "quant": "GGUF Q4_K_M", "verdict": "unknown",
-        "reason": "Model Runner imports this GGUF model. The repository must provide Q4_K_M weights.",
-        "downloads": m.downloads, "likes": m.likes, "gated": bool(m.gated),
-    } for m in results]
+                                 sort="downloads", limit=min(max(limit, 1) * 2, 50), full=True)
+    rows = [{
+        "id": _reference("hf.co/" + m.id + ":Q4_K_M"), "quant": "GGUF Q4_K_M", "verdict": "unknown",
+        "reason": "Q4_K_M GGUF files are listed by this repository. A converter is not the original model author.",
+        "downloads": m.downloads, "likes": m.likes, "gated": bool(m.gated), **_source(m.id),
+    } for m in results if _q4_files(m.siblings or [])]
+    priority = {"official": 0, "converter": 1, "community": 2}
+    return sorted(rows, key=lambda row: priority[row["source_kind"]])[:min(max(limit, 1), 50)]
 
 
 def _pull(job: downloads.Job) -> None:

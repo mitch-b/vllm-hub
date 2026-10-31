@@ -113,6 +113,18 @@ inventing an 8K hard limit; manual context choices are validated by the native e
 Model size is shown only when the backend reports it. Model compatibility and
 tool calling still depend on the selected model and engine.
 
+Native Discover starts with six selected Hugging Face GGUF models for general
+chat and coding, from Qwen and Unsloth. Each shows its use case, weight size,
+and whether the repository belongs to an official publisher or an established
+converter (not the original author). Search prioritizes those publisher groups,
+labels community uploads, and includes only repositories listing Q4_K_M files.
+Community uploads are hidden by default; **Include community uploads** reveals
+them without presenting them as official or endorsed.
+Weights are not total memory requirements; leave room for macOS and context.
+An unavailable recommendation is shown with an explicit verification error,
+without hiding the other picks. Paste `hf.co/publisher/model:Q4_K_M` to import
+a specific repository; newer architectures may require an updated native engine.
+
 If a runtime is missing, the hub explains the one-time setup and reconnects
 when it becomes available. It never changes a running model for an unsupported
 start. Native Stop unloads only the model selected in this hub, not other Model
