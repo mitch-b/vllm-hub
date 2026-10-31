@@ -54,6 +54,17 @@ docker run --rm -v "${PWD}:/w" -w /w node:22-slim node tests/check_ui.mjs
    - Hubs with `HUB_AUTO_UPDATE=true` install it automatically, so a broken `main` reaches users quickly.
    - Keep `/healthz` working.
 
+## PR descriptions
+
+Fill `.github/pull_request_template.md` (`gh pr create --fill` uses the commit message; edit with `gh pr edit --body-file`). Keep it short; a reviewer should read it in under a minute.
+
+- **Why**: the problem or goal in 1-2 sentences, plus `Fixes #N` if applicable.
+- **What changed**: 1-3 bullets of intent or design that the diff doesn't make obvious. No file-by-file lists.
+- **Verified**: the exact commands you ran and what you saw (for example `pytest -q` shows 51 passed, or `curl /api/version` returns `auto_update: true`). Unit tests alone don't prove a runtime change works; exercise it.
+- **Review focus** (optional): the risky part, a tradeoff, or anything you didn't test. Be honest about gaps.
+
+Don't add checklists for things CI already enforces, emoji headers, or generated summaries of every file.
+
 ## Safety
 
 - The hub holds the Docker socket and has no auth. It binds to `127.0.0.1` unless the user sets `HUB_BIND`. Don't widen defaults.
