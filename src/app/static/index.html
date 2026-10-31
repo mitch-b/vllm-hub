@@ -58,6 +58,19 @@ code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
 .gpu .meter > i { display: block; height: 100%; width: 0; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .6s ease; }
 .gpu b { color: var(--text); font-weight: 550; }
 @media (max-width: 720px) { .gpu .name { display: none; } }
+.ver { display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 10px; border-radius: 99px; cursor: pointer;
+  border: 1px solid var(--border); background: none; color: var(--subtle); font-size: 12px; font-family: var(--mono); }
+.ver:hover { color: var(--text); border-color: var(--border-strong); }
+.ver.new { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: var(--accent-soft); font-family: inherit; font-weight: 600; }
+.ver.new::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
+.vgrid { display: grid; grid-template-columns: auto 1fr 1fr; gap: 8px 16px; font-size: 13px; align-items: baseline; }
+.vgrid .h { color: var(--subtle); font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; }
+.vgrid code { overflow-wrap: anywhere; }
+#updOverlay { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; backdrop-filter: blur(6px);
+  background: color-mix(in srgb, var(--bg) 70%, transparent); }
+#updOverlay .card { display: grid; gap: 12px; justify-items: center; text-align: center; padding: 28px 32px; border-radius: 16px;
+  background: var(--surface); border: 1px solid var(--border); min-width: 300px; }
+#updOverlay .progress { width: 220px; }
 
 /* Layout */
 main { max-width: 1040px; margin: 0 auto; padding: 28px 24px 80px; display: grid; gap: 20px; }
@@ -291,6 +304,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
   <div class="inner">
     <div class="brand"><span class="mark"><svg viewBox="0 0 24 24"><path d="M6 7l6 11 6-11" stroke="#fff" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>vLLM Hub</div>
     <div class="spacer"></div>
+    <button class="ver" id="ver" data-act="update-open" hidden></button>
     <div class="gpu" id="gpu" title="GPU memory in use"><span class="name">Detecting GPU…</span></div>
   </div>
 </header>
@@ -380,7 +394,18 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
   </form>
 </dialog>
 
+<dialog id="updDlg">
+  <form method="dialog">
+    <div class="dlg-head"><h3 id="upTitle">vLLM Hub version</h3><p id="upText"></p></div>
+    <div class="dlg-body" id="upBody"></div>
+    <div class="dlg-foot"><button class="btn ghost" type="button" data-act="update-check"><svg><use href="#i-restart"/></svg>Check now</button><div class="spacer"></div>
+      <button class="btn" value="cancel">Close</button><button class="btn accent" value="ok" id="upGo">Update now</button></div>
+  </form>
+</dialog>
+
 <div id="toasts" aria-live="polite"></div>
+<div id="updOverlay" hidden><div class="card"><b id="uoTitle">Switching to the new version</b><span class="subtle" id="uoText">Back in a second…</span>
+  <div class="progress indeterminate"><i></i></div></div></div>
 
 <script>
 const $ = s => document.querySelector(s);
@@ -731,6 +756,67 @@ async function refreshSystem() {
   renderAll();
 }
 async function loadLocal() { try { S.local = await api('/api/models'); } catch {} renderAll(); }
+
+/* ---------- Self-update ---------- */
+const shortRev = r => r ? r.slice(0, 7) : '';
+const verLabel = i => !i ? '—' : [i.version && i.version !== 'latest' ? i.version : '', shortRev(i.revision)].filter(Boolean).join(' · ') || (i.digest || i.digests?.[0] || '').slice(7, 19) || 'local build';
+async function loadVersion(force = false) {
+  try { S.ver = await api('/api/version' + (force ? '?refresh=1' : '')); } catch { return; }
+  renderVersion();
+  if (force && $('#updDlg').open) fillUpdateDlg();
+}
+function renderVersion() {
+  const v = S.ver, el = $('#ver');
+  if (!v?.managed) { el.hidden = true; return; }
+  el.hidden = false;
+  el.classList.toggle('new', !!v.update_available);
+  el.textContent = v.update_available ? 'Update available' : verLabel(v.local);
+  el.title = v.update_available ? 'A newer vLLM Hub image is published' : `vLLM Hub ${verLabel(v.local)} (up to date)`;
+}
+function fillUpdateDlg() {
+  const v = S.ver, l = v.local, r = v.remote, dev = !l.digests?.length;
+  $('#upTitle').textContent = v.update_available ? 'Update available' : 'vLLM Hub is up to date';
+  $('#upText').textContent = v.error ? v.error
+    : dev ? 'This container runs a local build. Updating switches it to the published image.'
+    : v.update_available ? 'The new version downloads in the background, then swaps in with about a second of downtime. Running models and Copilot sessions are not interrupted.'
+    : 'You are running the latest published image.';
+  const when = s => s ? new Date(s).toLocaleString() : '—';
+  const repo = 'https://github.com/' + v.image.split('/').slice(1).join('/').split(':')[0];
+  const cmp = l.revision && r?.revision && l.revision !== r.revision ? `<a href="${repo}/compare/${l.revision}...${r.revision}" target="_blank" rel="noopener">See what changed ${icon('ext')}</a>` : '';
+  $('#upBody').innerHTML = `<div class="vgrid">
+      <span></span><span class="h">Running</span><span class="h">Latest</span>
+      <span class="subtle">Version</span><code>${esc(verLabel(l))}</code><code>${esc(r ? verLabel(r) : '—')}</code>
+      <span class="subtle">Built</span><span>${esc(when(l.created))}</span><span>${esc(when(r?.created))}</span>
+    </div>
+    <div class="subtle" style="display:flex;gap:12px;flex-wrap:wrap"><span>${esc(v.image)}</span>${cmp}
+      ${v.checked_at ? `<span>checked ${esc(fmtAgo(v.checked_at))}</span>` : ''}</div>`;
+  $('#upGo').hidden = !v.update_available;
+}
+async function openUpdate() {
+  fillUpdateDlg();
+  const d = $('#updDlg'); d.returnValue = ''; d.showModal();
+  d.addEventListener('close', () => { if (d.returnValue === 'ok') doUpdate(); }, { once: true });
+}
+async function doUpdate() {
+  // The hub keeps working while the image downloads; only the final swap (~1s) blocks the UI.
+  const before = S.ver?.local?.digests?.[0] || S.ver?.local?.created, ov = $('#updOverlay'), el = $('#ver');
+  try { await post('/api/update'); } catch (e) { toast('Update failed', e.message, 'bad', 8000); return; }
+  el.classList.remove('new'); el.textContent = 'Downloading update…'; el.disabled = true;
+  const t0 = Date.now();
+  while (Date.now() - t0 < 600000) {
+    await new Promise(r => setTimeout(r, 1000));
+    let v;
+    try { v = await api('/api/version'); } catch { ov.hidden = false; continue; }
+    if (v.state?.status === 'error') { ov.hidden = true; el.disabled = false; renderVersion(); toast('Update failed', v.state.error, 'bad', 10000); return; }
+    if (v.state?.status === 'restarting') { el.textContent = 'Restarting…'; continue; }
+    const now = v.local?.digests?.[0] || v.local?.created;
+    if (now !== before) { $('#uoText').textContent = 'Updated. Reloading…'; ov.hidden = false; location.reload(); return; }
+    if (v.state?.status === 'idle' && !ov.hidden) {
+      ov.hidden = true; el.disabled = false; renderVersion(); toast('Update rolled back', 'The new version did not start; still running the previous one. See `docker logs vllm-hub-updater`.', 'bad', 0); return;
+    }
+  }
+  ov.hidden = true; el.disabled = false; toast('Update is taking too long', 'Check `docker logs vllm-hub-updater`, or run docker compose pull && docker compose up -d.', 'bad', 0);
+}
 async function loadRecommended() {
   try { S.rec = await api('/api/recommended'); } catch (e) { S.rec = []; toast('Could not load recommendations', e.message, 'bad'); }
   renderDiscover();
@@ -893,6 +979,8 @@ document.addEventListener('click', e => {
       if (S.open.has(target)) { if (target === 'playground') { renderChat(); $('#prompt').focus(); } if (target === 'console') { const l = $('#logs'); l.scrollTop = l.scrollHeight; } } break;
     case 'copy': copy(b.dataset.from ? $('#' + b.dataset.from).textContent : b.dataset.text); break;
     case 'conn': conn[b.dataset.k] = b.dataset.v; saveConn(); renderSnippets(); break;
+    case 'update-open': openUpdate(); break;
+    case 'update-check': loadVersion(true); break;
     case 'stop': stopModel(); break;
     case 'restart': { const last = store.get('last', null), v = V();
       const o = last && last.id === v.model ? last : { id: v.model, context: +v.context || null };
@@ -943,6 +1031,7 @@ document.addEventListener('keydown', e => {
   const jobTick = async () => { await refreshJobs(); setTimeout(jobTick, S.jobs.some(j => j.status === 'downloading' || j.status === 'queued') ? 1000 : 4000); };
   setTimeout(jobTick, 1000);
   setInterval(() => { if (phase() === 'loading') renderRuntime(); }, 1000);
+  loadVersion(); setInterval(loadVersion, 30 * 60 * 1000);
 })();
 </script>
 </body>

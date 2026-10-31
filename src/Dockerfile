@@ -15,6 +15,7 @@ COPY app ./app
 
 # Runs as root on purpose: it needs the Docker socket to manage the vLLM container.
 EXPOSE 7860
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+# start-interval probes every second while booting so a self-update can confirm health almost immediately.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --start-interval=1s --retries=3 \
   CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7860/healthz', timeout=3)"]
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "7860"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "7860", "--timeout-graceful-shutdown", "2"]
