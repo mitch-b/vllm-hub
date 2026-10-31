@@ -499,6 +499,7 @@ const phase = () => { const v = V();
 };
 const activeJob = id => S.jobs.find(j => j.repo_id === id && (j.status === 'downloading' || j.status === 'queued'));
 const isLocal = id => !activeJob(id) && S.local.some(m => m.id === id);
+const jobPercent = j => Math.min(99, Math.floor(j.percent || 0));
 const servedName = () => V().served?.id || '';
 
 /* ---------- Render: top bar ---------- */
@@ -670,20 +671,21 @@ function renderLibrary() {
   const v = V(), p = phase();
   const latest = new Map();
   for (const j of S.jobs) if (!latest.has(j.repo_id)) latest.set(j.repo_id, j);
-  const jobs = [...latest.values()].filter(j => !S.dismissed.has(j.id) && (j.status === 'downloading' || j.status === 'queued' || j.status === 'error' || j.status === 'cancelled'));
+  const jobs = [...latest.values()].filter(j => !S.dismissed.has(j.id) && (j.status === 'downloading' || j.status === 'queued' || j.status === 'error' || j.status === 'cancelled' || (j.status === 'done' && !S.local.some(m => m.id === j.repo_id))));
   const jobModels = new Set(jobs.map(j => j.repo_id));
   const rows = [];
   for (const j of jobs) {
     const live = j.status === 'downloading' || j.status === 'queued';
-    const pct = j.percent || 0;
+    const syncing = j.status === 'done';
+    const pct = jobPercent(j);
     rows.push(`<div class="item">${avatar(j.repo_id)}<div class="main"><div class="title">${nameHtml(j.repo_id)}</div>
-      <div class="meta">${live ? (j.total ? `<span>${fmtGB(j.done)} of ${fmtGB(j.total)}</span><span class="sep"></span><span>${pct.toFixed(0)}%</span>` : '<span>Preparing…</span>')
-        + (j.speed_bps ? `<span class="sep"></span><span>${(j.speed_bps / 1e6).toFixed(1)} MB/s</span>` : '') + (j.eta_s != null ? `<span class="sep"></span><span>${fmtEta(j.eta_s)} left</span>` : '')
+      <div class="meta">${syncing ? '<span>Updating library…</span>' : live ? (j.finalizing ? '<span>Finalizing snapshot…</span>' : j.total ? `<span>${fmtGB(j.done)} of ${fmtGB(j.total)}</span><span class="sep"></span><span>${pct}%</span>` : '<span>Preparing…</span>')
+        + (!j.finalizing && j.speed_bps ? `<span class="sep"></span><span>${(j.speed_bps / 1e6).toFixed(1)} MB/s</span>` : '') + (!j.finalizing && j.eta_s != null ? `<span class="sep"></span><span>${fmtEta(j.eta_s)} left</span>` : '')
         : `<span style="color:var(--bad)">${esc(j.status === 'cancelled' ? 'Cancelled' : j.error || 'Download failed')}</span>`}</div>
       ${live ? `<div class="progress bar"><i style="width:${pct}%"></i></div>` : ''}</div>
       <div class="actions">${S.runAfter[j.id] ? '<span class="badge accent">Runs when done</span>' : ''}
         ${live ? `<button class="btn ghost sm" data-act="cancel-job" data-job="${esc(j.id)}">Cancel</button>`
-          : `<button class="btn sm" data-act="pull" data-id="${esc(j.repo_id)}">Retry</button><button class="btn ghost icon sm" data-act="dismiss-job" data-job="${esc(j.id)}" aria-label="Dismiss">${icon('x')}</button>`}</div></div>`);
+          : syncing ? '' : `<button class="btn sm" data-act="pull" data-id="${esc(j.repo_id)}">Retry</button><button class="btn ghost icon sm" data-act="dismiss-job" data-job="${esc(j.id)}" aria-label="Dismiss">${icon('x')}</button>`}</div></div>`);
   }
   const models = S.local.filter(m => !jobModels.has(m.id)).sort((a, b) => (b.last_used || 0) - (a.last_used || 0));
   for (const m of models) {
@@ -735,7 +737,7 @@ function discoverRow(m, disabled) {
     .filter(Boolean).map(x => `<span>${esc(x)}</span>`).join('<span class="sep"></span>');
   let actions;
   if (local) actions = `<span class="badge">In library</span><button class="btn sm" data-act="run" data-id="${esc(m.id)}" data-w="${size ?? ''}">${icon('play')}Run</button>`;
-  else if (job) actions = `<span class="badge accent">${job.total ? Math.round(job.percent) + '%' : 'Queued'}</span>`;
+  else if (job) actions = `<span class="badge accent">${job.finalizing ? 'Finalizing snapshot…' : job.total ? jobPercent(job) + '%' : 'Queued'}</span>`;
   else actions = `<button class="btn ghost icon sm" data-act="pull" data-id="${esc(m.id)}" ${disabled ? 'disabled' : ''} aria-label="Download only" title="Download only">${icon('down')}</button>
     <button class="btn sm" data-act="run" data-id="${esc(m.id)}" data-w="${size ?? ''}" ${disabled ? 'disabled' : ''}>${icon('play')}Run</button>`;
   return `<div class="item ${open ? 'expanded' : ''}">${avatar(m.id)}
@@ -774,7 +776,11 @@ async function refreshSystem() {
   } catch { S.sys = S.sys || { vllm: { docker_ok: false } }; }
   renderAll();
 }
-async function loadLocal() { try { S.local = await api('/api/models'); } catch {} renderAll(); }
+async function loadLocal() {
+  try { S.local = await api('/api/models'); }
+  catch (e) { toast('Could not refresh library', e.message, 'bad'); return false; }
+  renderAll(); return true;
+}
 
 /* ---------- Self-update ---------- */
 const shortRev = r => r ? r.slice(0, 7) : '';
@@ -845,10 +851,10 @@ async function refreshJobs() {
   try { S.jobs = await api('/api/jobs'); } catch { return; }
   for (const j of S.jobs) {
     const prev = S.prevJob[j.id];
-    if (j.status === 'done' && prev && prev !== 'done') {
-      await loadLocal();
+    if (j.status === 'done' && (prev !== 'done' || S.runAfter[j.id] || !S.local.some(m => m.id === j.repo_id))) {
+      if (!await loadLocal() || !S.local.some(m => m.id === j.repo_id)) continue;
       const r = S.runAfter[j.id];
-      if (r) { delete S.runAfter[j.id]; startModel(r); } else toast('Download complete', j.repo_id, 'ok');
+      if (r) { delete S.runAfter[j.id]; startModel(r); } else if (prev && prev !== 'done') toast('Download complete', j.repo_id, 'ok');
     }
     if (j.status === 'error' && prev && prev !== 'error') toast('Download failed', j.error || j.repo_id, 'bad', 8000);
     S.prevJob[j.id] = j.status;

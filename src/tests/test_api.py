@@ -214,6 +214,31 @@ def test_jobs_and_cancel_unknown(api):
     assert api.post("/api/jobs/nope/cancel").status_code == 404
 
 
+def test_jobs_distinguishes_finalizing_from_complete(api, monkeypatch):
+    job = downloads.Job("org/model")
+    job.total = job.done = 100
+    job.status = "downloading"
+    monkeypatch.setattr(downloads, "_jobs", {job.id: job})
+    [pending] = api.get("/api/jobs").json()
+    assert pending["finalizing"] and pending["percent"] < 100
+    job.status = "done"
+    [complete] = api.get("/api/jobs").json()
+    assert not complete["finalizing"] and complete["percent"] == 100
+
+
+def test_delete_model_does_not_leave_a_completed_job_to_reappear(api, monkeypatch):
+    job = downloads.Job("org/model")
+    job.status = "done"
+    monkeypatch.setattr(downloads, "_jobs", {job.id: job})
+    monkeypatch.setattr(downloads, "scan_cache_dir", lambda: SimpleNamespace(
+        repos=[SimpleNamespace(repo_id=job.repo_id, repo_type="model",
+                               revisions=[SimpleNamespace(commit_hash="revision")])],
+        delete_revisions=lambda *args: SimpleNamespace(execute=lambda: None),
+    ))
+    assert api.delete("/api/models/org/model").status_code == 200
+    assert api.get("/api/jobs").json() == []
+
+
 @pytest.mark.parametrize("util", [0.05, 0.99])
 def test_run_rejects_out_of_range_util(api, util):
     assert api.post("/api/run", json={"repo_id": "org/m", "util": util}).status_code == 422
