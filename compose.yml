@@ -2,7 +2,7 @@ name: vllm-hub
 
 services:
   hub:
-    image: ghcr.io/mitch-b/vllm-hub:latest
+    image: ghcr.io/mitch-b/vllm-hub:latest # pulled by default; `up --build` builds ./src instead
     build: ./src
     ports:
       - "127.0.0.1:7860:7860" # UI + API (localhost only: the app controls Docker)
@@ -13,6 +13,7 @@ services:
       HF_CACHE_SOURCE: ${HF_CACHE_SOURCE:-vllm-hub-hf-cache}
       VLLM_IMAGE: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
       VLLM_PORT: ${VLLM_PORT:-8000}
+      HUB_UPDATE_CHECK: ${HUB_UPDATE_CHECK:-true}
     volumes:
       - ${HF_CACHE_SOURCE:-vllm-hub-hf-cache}:/cache
       - /var/run/docker.sock:/var/run/docker.sock

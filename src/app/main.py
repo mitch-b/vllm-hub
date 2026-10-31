@@ -1,16 +1,25 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
+from threading import Thread
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import downloads, hf, profiles, runner
+from . import downloads, hf, profiles, runner, updates
 from .gpu import gpu_info
 
-app = FastAPI(title="vLLM Hub")
+
+@asynccontextmanager
+async def lifespan(_app):
+    Thread(target=updates.warm, daemon=True).start()  # remember our image before any pull moves its tag
+    yield
+
+
+app = FastAPI(title="vLLM Hub", lifespan=lifespan)
 STATIC = Path(__file__).parent / "static"
 
 
@@ -121,6 +130,19 @@ def chat(req: ChatRequest):
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
+
+
+@app.get("/api/version")
+def version(refresh: bool = False):
+    return updates.check(force=refresh)
+
+
+@app.post("/api/update")
+def update():
+    try:
+        return updates.start_update()
+    except Exception as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")

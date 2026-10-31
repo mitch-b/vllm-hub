@@ -55,9 +55,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Lint Dockerfile
-        uses: hadolint/hadolint-action@v3.1.0
-        with:
-          dockerfile: src/Dockerfile
+        run: docker run --rm -i hadolint/hadolint:v2.14.0 hadolint --failure-threshold info - < Dockerfile
 
       - name: Validate compose file
         working-directory: .

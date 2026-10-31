@@ -15,18 +15,35 @@ A local web UI for running Hugging Face models on [vLLM](https://docs.vllm.ai) w
 
 Requirements: Docker with the NVIDIA container runtime (Docker Desktop + WSL2 on Windows).
 
+No clone needed. Grab the compose file and start it; it pulls the published image `ghcr.io/mitch-b/vllm-hub`:
+
 ```powershell
-cp .env.example .env     # optional
-docker compose up -d --build
+mkdir vllm-hub; cd vllm-hub
+curl.exe -fsSLO https://raw.githubusercontent.com/mitch-b/vllm-hub/main/compose.yml
+docker compose up -d
 ```
 
-Open <http://localhost:7860>. To reuse an existing Hugging Face cache, set in `.env`:
+From a clone, `docker compose up -d` does the same; add `--build` to run your local source instead.
+
+Open <http://localhost:7860>. To reuse an existing Hugging Face cache, create a `.env` next to `compose.yml` (see [.env.example](.env.example)):
 
 ```
 HF_CACHE_SOURCE=C:/Users/you/.cache/huggingface
 ```
 
 Gated models need `HF_TOKEN` in `.env`.
+
+## Updates
+
+The hub checks GitHub's registry every 30 minutes. When a newer image is published, the version pill in the top bar turns into **Update available**. Click it to see what changed, then **Update now**:
+
+1. The new image downloads in the background while the hub keeps working.
+2. A short-lived `vllm-hub-updater` container creates the new hub ahead of time, then swaps it in. The UI is unreachable for about a second and reloads itself.
+3. If the new version isn't healthy within two minutes, the previous one is restarted.
+
+The model server is a separate container and keeps serving throughout, so Copilot sessions aren't interrupted. Updates wait until downloads finish.
+
+Prefer the command line? `docker compose pull && docker compose up -d`. Set `HUB_UPDATE_CHECK=false` to turn off the check.
 
 ## Use it from GitHub Copilot
 
@@ -65,10 +82,11 @@ Agentic use needs tool calling (enabled automatically) and a context of at least
 | `HF_CACHE_SOURCE` | `vllm-hub-hf-cache` | Named volume or host path for the model cache |
 | `VLLM_IMAGE` | `vllm/vllm-openai:latest` | vLLM image to run |
 | `VLLM_PORT` | `8000` | Host port for the vLLM API |
+| `HUB_UPDATE_CHECK` | `true` | Check the registry for a newer hub image |
 
 ## API
 
-`GET /api/system` · `GET /api/search?q=` · `GET /api/recommended` · `GET|DELETE /api/models` · `POST /api/pull` · `GET /api/jobs` · `POST /api/jobs/{id}/cancel` · `POST /api/run` · `POST /api/stop` · `GET /api/logs` · `POST /api/chat` · `GET /healthz`
+`GET /api/system` · `GET /api/search?q=` · `GET /api/recommended` · `GET|DELETE /api/models` · `POST /api/pull` · `GET /api/jobs` · `POST /api/jobs/{id}/cancel` · `POST /api/run` · `POST /api/stop` · `GET /api/logs` · `POST /api/chat` · `GET /api/version?refresh=1` · `POST /api/update` · `GET /healthz`
 
 ## Notes
 
