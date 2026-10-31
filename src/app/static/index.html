@@ -759,7 +759,7 @@ async function loadLocal() { try { S.local = await api('/api/models'); } catch {
 
 /* ---------- Self-update ---------- */
 const shortRev = r => r ? r.slice(0, 7) : '';
-const verLabel = i => !i ? '—' : [i.version && i.version !== 'latest' ? i.version : '', shortRev(i.revision)].filter(Boolean).join(' · ') || (i.digest || i.digests?.[0] || '').slice(7, 19) || 'local build';
+const verLabel = i => !i ? '—' : (i.version && i.version !== 'latest' ? i.version : '') || shortRev(i.revision) || (i.digest || i.digests?.[0] || '').slice(7, 19) || 'local build';
 async function loadVersion(force = false) {
   try { S.ver = await api('/api/version' + (force ? '?refresh=1' : '')); } catch { return; }
   renderVersion();
@@ -789,6 +789,7 @@ function fillUpdateDlg() {
       <span class="subtle">Built</span><span>${esc(when(l.created))}</span><span>${esc(when(r?.created))}</span>
     </div>
     <div class="subtle" style="display:flex;gap:12px;flex-wrap:wrap"><span>${esc(v.image)}</span>${cmp}
+      ${v.auto_update ? '<span>auto-update on</span>' : ''}
       ${v.checked_at ? `<span>checked ${esc(fmtAgo(v.checked_at))}</span>` : ''}</div>`;
   $('#upGo').hidden = !v.update_available;
 }

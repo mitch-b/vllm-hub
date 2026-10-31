@@ -45,15 +45,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Version (build time, US Central)
+        id: ver
+        run: echo "version=$(TZ=America/Chicago date +%Y%m%d-%H%M)" >> "$GITHUB_OUTPUT"
+
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+            type=raw,value=${{ steps.ver.outputs.version }}
+            type=raw,value=latest
             type=sha
             type=semver,pattern={{version}}
+          labels: |
+            org.opencontainers.image.version=${{ steps.ver.outputs.version }}
 
       - name: Build and push Docker image
         id: build

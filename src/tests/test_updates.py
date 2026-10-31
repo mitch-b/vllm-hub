@@ -127,3 +127,27 @@ def test_new_config_keeps_user_settings_and_drops_image_defaults():
     assert not {"Hostname", "Cmd", "WorkingDir", "Healthcheck"} & cfg.keys()
     assert cfg["HostConfig"] == attrs["HostConfig"]
     assert cfg["NetworkingConfig"]["EndpointsConfig"]["vllm-hub-net"]["Aliases"] == ["hub"]
+
+
+def test_auto_tick(monkeypatch):
+    started = []
+    monkeypatch.setattr(updates, "_self", lambda: fake_self())
+    monkeypatch.setattr(updates, "remote_info", lambda arch: {"digest": "sha256:new"})
+    monkeypatch.setattr(updates, "_run_update", lambda cid: started.append(cid))
+    monkeypatch.setattr(updates, "AUTO", False)
+    assert updates.auto_tick() == "disabled"
+    monkeypatch.setattr(updates, "AUTO", True)
+    monkeypatch.setattr(downloads, "list_jobs", lambda: [{"repo_id": "org/m", "status": "downloading"}])
+    assert updates.auto_tick().startswith("deferred") and not started
+    monkeypatch.setattr(downloads, "list_jobs", lambda: [])
+    assert updates.auto_tick() == "updating" and started == ["c0ffee"]
+    monkeypatch.setattr(updates, "remote_info", lambda arch: {"digest": "sha256:old"})
+    updates._state.update(status="idle")
+    assert updates.auto_tick() == "current"
+
+
+def test_pinned_tag_is_not_managed(monkeypatch):
+    monkeypatch.setattr(updates, "_self", lambda: fake_self("ghcr.io/mitch-b/vllm-hub:20261031-1042"))
+    monkeypatch.setattr(updates, "remote_info", lambda arch: {"digest": "sha256:new"})
+    assert TestClient(main.app).get("/api/version").json()["managed"] is False
+    assert TestClient(main.app).post("/api/update").status_code == 409

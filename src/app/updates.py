@@ -11,8 +11,14 @@ import httpx
 
 from . import downloads, runner
 
+
+def _flag(name: str, default: str) -> bool:
+    return os.getenv(name, default).lower() not in ("0", "false", "no", "")
+
+
 IMAGE = os.getenv("HUB_IMAGE", "ghcr.io/mitch-b/vllm-hub:latest")
-CHECK = os.getenv("HUB_UPDATE_CHECK", "true").lower() not in ("0", "false", "no")
+CHECK = _flag("HUB_UPDATE_CHECK", "true")
+AUTO = _flag("HUB_AUTO_UPDATE", "false")
 CACHE_SECS = 1800
 UPDATER_NAME = "vllm-hub-updater"
 INDEX_TYPES = ", ".join([
@@ -115,9 +121,9 @@ def remote_info(arch: str = "amd64") -> dict:
 
 def check(force: bool = False) -> dict:
     local = local_info()
-    managed = bool(local.get("container")) and split_ref(local.get("image") or "")[:2] == split_ref(IMAGE)[:2]
-    out = {"image": IMAGE, "check_enabled": CHECK, "local": local, "managed": managed, "remote": None,
-           "error": None, "update_available": False, "state": dict(_state)}
+    managed = bool(local.get("container")) and split_ref(local.get("image") or "") == split_ref(IMAGE)
+    out = {"image": IMAGE, "check_enabled": CHECK, "auto_update": AUTO and CHECK, "local": local, "managed": managed,
+           "remote": None, "error": None, "update_available": False, "state": dict(_state)}
     if not CHECK:
         return out
     if force or time.time() - _cache["at"] > CACHE_SECS:
@@ -159,7 +165,7 @@ def start_update() -> dict:
     c = _self()
     if c is None:
         raise RuntimeError("The hub is not running in a container, so it can't update itself.")
-    if split_ref((c.attrs.get("Config") or {}).get("Image") or "")[:2] != split_ref(IMAGE)[:2]:
+    if split_ref((c.attrs.get("Config") or {}).get("Image") or "") != split_ref(IMAGE):
         raise RuntimeError(f"This container doesn't run {IMAGE}; update it with docker compose instead.")
     busy = [j["repo_id"] for j in downloads.list_jobs() if j["status"] in ("queued", "downloading")]
     if busy:
@@ -170,3 +176,29 @@ def start_update() -> dict:
         _state.update(status="pulling", error=None)
     threading.Thread(target=_run_update, args=(c.id,), daemon=True).start()
     return dict(_state)
+
+
+def auto_tick() -> str:
+    """One auto-update pass. Returns what happened, for logs and tests."""
+    if not (AUTO and CHECK):
+        return "disabled"
+    info = check(force=True)
+    if not (info["managed"] and info["update_available"]):
+        return "current" if info["managed"] else "unmanaged"
+    if _state["status"] != "idle":
+        return "busy"
+    try:
+        start_update()
+    except RuntimeError as exc:  # e.g. downloads running: try again next tick
+        return f"deferred: {exc}"
+    return "updating"
+
+
+def auto_loop() -> None:
+    time.sleep(60)  # let the hub settle (and a just-finished update report healthy) first
+    while True:
+        try:
+            print(f"auto-update: {auto_tick()}", flush=True)
+        except Exception as exc:
+            print(f"auto-update check failed: {exc}", flush=True)
+        time.sleep(CACHE_SECS)

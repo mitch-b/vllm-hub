@@ -43,7 +43,9 @@ The hub checks GitHub's registry every 30 minutes. When a newer image is publish
 
 The model server is a separate container and keeps serving throughout, so Copilot sessions aren't interrupted. Updates wait until downloads finish.
 
-Prefer the command line? `docker compose pull && docker compose up -d`. Set `HUB_UPDATE_CHECK=false` to turn off the check.
+Prefer the command line? `docker compose pull && docker compose up -d`. Set `HUB_UPDATE_CHECK=false` to turn off the check, or `HUB_AUTO_UPDATE=true` in `.env` to install new versions automatically (checked every 30 minutes; it waits for downloads to finish).
+
+Images are tagged with their build time in US Central (`20261031-1042` = Oct 31 2026, 10:42 AM), plus `latest`, `sha-<commit>`, and semver for `v*.*.*` git tags. Pin a build with `image: ghcr.io/mitch-b/vllm-hub:20261031-1042` in a compose override; pinned hubs don't self-update.
 
 ## Use it from GitHub Copilot
 
@@ -83,6 +85,7 @@ Agentic use needs tool calling (enabled automatically) and a context of at least
 | `VLLM_IMAGE` | `vllm/vllm-openai:latest` | vLLM image to run |
 | `VLLM_PORT` | `8000` | Host port for the vLLM API |
 | `HUB_UPDATE_CHECK` | `true` | Check the registry for a newer hub image |
+| `HUB_AUTO_UPDATE` | `false` | Install newer hub images automatically |
 
 ## API
 
