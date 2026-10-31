@@ -1,0 +1,43 @@
+{
+  "name": "vLLM Hub",
+  "build": { "dockerfile": "Dockerfile" },
+  "features": {
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
+  },
+  // Adds --gpus all when the host has one, so nvidia-smi works for VRAM detection.
+  "hostRequirements": { "gpu": "optional" },
+  "mounts": [
+    "source=vllm-hub-hf-cache,target=/cache,type=volume"
+  ],
+  "containerEnv": {
+    "HF_HOME": "/cache",
+    "HF_CACHE_SOURCE": "vllm-hub-hf-cache",
+    "HF_HUB_DISABLE_TELEMETRY": "1",
+    "NVIDIA_DRIVER_CAPABILITIES": "utility",
+    "PYTHONUNBUFFERED": "1"
+  },
+  "postCreateCommand": "pip install --user -r src/requirements-dev.txt",
+  // Join the network the hub puts the vLLM container on, so http://vllm:8000 resolves.
+  "postStartCommand": "docker network create vllm-hub-net >/dev/null 2>&1; docker network connect vllm-hub-net \"$(hostname)\" >/dev/null 2>&1; true",
+  "forwardPorts": [7860],
+  "portsAttributes": {
+    "7860": { "label": "vLLM Hub UI", "onAutoForward": "openBrowser" }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "ms-azuretools.vscode-containers"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.analysis.extraPaths": ["${workspaceFolder}/src"],
+        "python.testing.pytestEnabled": true,
+        "python.testing.cwd": "${workspaceFolder}/src",
+        "python.testing.pytestArgs": ["tests"]
+      }
+    }
+  }
+}

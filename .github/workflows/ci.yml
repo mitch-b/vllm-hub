@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: src
+
+jobs:
+  test:
+    name: Lint and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: src/requirements*.txt
+
+      - name: Install dependencies
+        run: uv venv && uv pip install -r requirements-dev.txt
+
+      - name: Ruff
+        run: .venv/bin/ruff check --output-format=github .
+
+      - name: Unit and API tests
+        run: .venv/bin/pytest -q -p no:warnings
+
+      - name: UI script syntax
+        run: node tests/check_ui.mjs
+
+      - name: Lint workflows
+        working-directory: .
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 -color
+
+  image:
+    name: Image build and smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: src/Dockerfile
+
+      - name: Validate compose file
+        working-directory: .
+        run: docker compose config -q
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./src
+          load: true
+          tags: vllm-hub:ci
+          cache-from: type=gha,scope=hub
+          cache-to: type=gha,scope=hub,mode=max
+
+      - name: Smoke test
+        run: |
+          docker run -d --name hub -p 7860:7860 -e VRAM_TOTAL_MIB=24576 vllm-hub:ci
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:7860/healthz >/dev/null && break
+            [ "$i" -eq 30 ] && { docker logs hub; exit 1; }
+            sleep 1
+          done
+          curl -sf http://localhost:7860/ | grep -q "<title>vLLM Hub</title>"
+          curl -sf http://localhost:7860/api/system | jq -e '.gpu.total_mib == 24576 and .vllm.docker_ok == false'
+          curl -sf http://localhost:7860/api/jobs | jq -e 'type == "array"'
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:7860/api/pull -H 'Content-Type: application/json' -d '{"repo_id":"bad"}')" = 400
+
+      - name: Container logs
+        if: always()
+        run: docker logs hub 2>&1 | tail -50 || true
+
+  ci-ok:
+    name: CI passed
+    if: always()
+    needs: [test, image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Require all jobs to succeed
+        working-directory: .
+        run: |
+          [ "${{ needs.test.result }}" = success ] && [ "${{ needs.image.result }}" = success ] || exit 1

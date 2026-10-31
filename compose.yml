@@ -1,0 +1,28 @@
+name: vllm-hub
+
+services:
+  hub:
+    image: ghcr.io/mitch-b/vllm-hub:latest
+    build: ./src
+    ports:
+      - "127.0.0.1:7860:7860" # UI + API (localhost only: the app controls Docker)
+    gpus: all # only so the hub can read GPU/VRAM info via nvidia-smi
+    environment:
+      NVIDIA_DRIVER_CAPABILITIES: utility
+      HF_TOKEN: ${HF_TOKEN:-}
+      HF_CACHE_SOURCE: ${HF_CACHE_SOURCE:-vllm-hub-hf-cache}
+      VLLM_IMAGE: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
+      VLLM_PORT: ${VLLM_PORT:-8000}
+    volumes:
+      - ${HF_CACHE_SOURCE:-vllm-hub-hf-cache}:/cache
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks: [vllm-hub-net]
+    restart: unless-stopped
+
+volumes:
+  vllm-hub-hf-cache:
+    name: vllm-hub-hf-cache
+
+networks:
+  vllm-hub-net:
+    name: vllm-hub-net
