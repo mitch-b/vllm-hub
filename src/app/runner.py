@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import os
+import re
 import time
+from datetime import datetime
 
 import docker
 import httpx
-from docker.errors import NotFound
+from docker.errors import DockerException, NotFound
 from docker.types import DeviceRequest
 
 from . import capacity, profiles
@@ -44,6 +46,80 @@ def _ensure_network() -> None:
         client().networks.create(NETWORK)
 
 
+def _timestamp(value: str) -> float | None:
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return dt.timestamp() if dt.year > 1970 and dt.tzinfo else None
+    except (ValueError, TypeError):
+        return None
+
+
+def _startup(c) -> dict:
+    """Report only milestones and counts actually emitted by this startup attempt."""
+    started = _timestamp(c.attrs.get("State", {}).get("StartedAt", ""))
+    active = c.status == "running"
+    result = {
+        "container_id": c.id, "started_at": started if active else None,
+        "elapsed_seconds": max(0, time.time() - started) if active and started else None,
+        "stage": "Starting engine" if active else "Waiting for container",
+        "progress": None, "last_log_at": None, "error": None,
+    }
+    if c.status == "restarting":
+        result["stage"] = "Container restarting"
+    if not active:
+        return result
+    if not started:
+        result["error"] = "Container startup timestamp unavailable"
+        return result
+    try:
+        logs = c.logs(tail=300, since=int(started), timestamps=True).decode(errors="replace")
+    except DockerException as exc:
+        result["error"] = f"Startup logs unavailable: {exc}"
+        return result
+    stamp = None
+    # Bound parsing work, including unusually large individual log records.
+    for line in logs[-262144:].splitlines():
+        timestamp, _, message = line.partition(" ")
+        parsed = _timestamp(timestamp)
+        if parsed is not None:
+            stamp = parsed
+            line = message
+        if stamp is None or stamp < started:
+            continue
+        line = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", line)
+        if not line.strip():
+            continue
+        result["last_log_at"] = max(result["last_log_at"] or stamp, stamp)
+        lower = line.lower()
+        stage = None
+        if re.search(r"loading (?:safetensors|pt|np_?cache) checkpoint shards"
+                     r"|multi-thread loading (?:pt )?shards", lower):
+            stage = "Loading weights"
+        elif "capturing cuda graph" in lower or "capturing cudagraph" in lower:
+            stage = "Capturing CUDA graphs"
+        elif "graph capturing finished" in lower or "cuda graph capturing finished" in lower:
+            stage = "Waiting for API readiness"
+        elif "init engine" in lower or "application startup complete" in lower:
+            stage = "Waiting for API readiness"
+        elif "torch.compile" in lower or "compiling" in lower:
+            stage = "Compiling model"
+        elif ("loading model weights took" in lower or "model loading took" in lower
+              or "gpu kv cache size" in lower or "available kv cache memory" in lower
+              or "warming up" in lower or "warmup" in lower or "profile run" in lower):
+            stage = "Warming up"
+        elif "starting to load model" in lower:
+            stage = "Loading weights"
+        if stage:
+            result["stage"], result["progress"] = stage, None
+            if stage in ("Loading weights", "Capturing CUDA graphs"):
+                count = re.search(r"\b(\d+)\s*/\s*(\d+)\b", line)
+                if count:
+                    done, total = map(int, count.groups())
+                    if 0 <= done <= total and total > 0:
+                        result["progress"] = {"completed": done, "total": total}
+    return result
+
+
 def status() -> dict:
     try:
         c = _container()
@@ -71,6 +147,7 @@ def status() -> dict:
         "docker_ok": True, "state": state, "model": model, "ready": ready, "served": served,
         "port": HOST_PORT, "context": c.labels.get("vllm-hub.context"), "kv_tokens": kv,
         "url": f"http://localhost:{HOST_PORT}/v1",
+        "startup": _startup(c) if not ready and state in ("running", "created", "restarting") else None,
     }
 
 

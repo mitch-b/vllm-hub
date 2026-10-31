@@ -94,6 +94,21 @@ The first time a model runs, the hub reads vLLM's measured KV-cache size from it
 
 A running model restarts with Docker (`unless-stopped`); **Stop** removes it so it stays off.
 
+### Startup feedback
+
+While a model starts, the timer uses Docker's actual start time, so refreshing the page
+or restarting the hub does not reset it. A new model container or Docker restart starts
+a new timer. Before Docker starts the container, the UI says **Waiting for container**.
+
+Startup stages (weight loading, warm-up, compilation and CUDA graph capture) and
+shard/graph counts are taken from recent vLLM logs when available, not an estimated
+overall percentage. Last-log activity shows when the server last emitted output;
+a quiet period is not proof of a hang. Log formats vary by vLLM version, so unrecognized
+output keeps the generic stage and the **Console** remains available for details.
+`/api/system` includes a `vllm.startup` object while starting, with the container ID,
+start time, elapsed seconds, stage, optional counts, last-log timestamp and any log-read
+error; it is `null` once ready or exited.
+
 ## Configuration
 
 | Variable | Default | Purpose |

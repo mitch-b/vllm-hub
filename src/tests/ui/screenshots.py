@@ -34,6 +34,11 @@ def open_page(browser, overrides=None):
     for m in data["models"]:
         m["last_used"] += shift
     data["version"]["checked_at"] += shift
+    startup = data["system"]["vllm"].get("startup")
+    if startup:
+        for key in ("started_at", "last_log_at"):
+            if startup.get(key) is not None:
+                startup[key] += shift
     page = browser.new_page(viewport=VIEWPORT, color_scheme="dark")
 
     def api(route):
@@ -175,6 +180,79 @@ def console(b):
     return p
 
 
+def starting(b):
+    system = fixture("system")
+    system["vllm"].update(ready=False, served=None, startup=fixture("starting"))
+    p = open_page(b, {"system": system})
+    p.wait_for_selector("#startupStage")
+    assert p.locator("#startupStage").inner_text() == "Loading weights · 3 / 8 shards"
+    assert p.locator("#elapsed").inner_text().startswith("2m ")
+    p.reload()
+    p.wait_for_selector("#startupStage")
+    assert p.locator("#elapsed").inner_text().startswith("2m ")
+    assert p.locator("#startupStage").inner_text() == "Loading weights · 3 / 8 shards"
+    # The client advances server-relative durations even when its wall clock is skewed.
+    p.evaluate("S.sysAt -= 10000; renderRuntime()")
+    assert p.locator("#elapsed").inner_text().startswith("2m 15")
+    return p
+
+
+def warming(b):
+    p = starting(b)
+    p.evaluate("""() => {
+        S.sys.vllm.startup.stage = 'Warming up';
+        S.sys.vllm.startup.progress = null;
+        S.sys.vllm.startup.last_log_at -= 60;
+        renderRuntime();
+    }""")
+    assert p.locator("#startupStage").inner_text() == "Warming up"
+    assert "does not mean it is stuck" in p.locator("#startupActivity").inner_text()
+    # A replacement container and then a Docker restart must not inherit the old timer.
+    p.evaluate("""() => {
+        S.sys.vllm.model = 'fixture/new-model';
+        S.sys.vllm.startup = {
+            container_id: 'replacement', elapsed_seconds: 5,
+            started_at: 1000, last_log_at: null, stage: 'Starting engine', progress: null
+        };
+        S.sysAt = Date.now(); renderRuntime();
+    }""")
+    assert p.locator("#elapsed").inner_text() == "5s"
+    p.evaluate("S.sys.vllm.state = 'restarting'; S.sys.vllm.startup = {stage: 'Container restarting'}; renderRuntime()")
+    assert p.locator("#elapsed").inner_text() == "Waiting for container"
+    assert p.locator("#startupStage").inner_text() == "Container restarting"
+    p.evaluate("S.sys.vllm.ready = true; renderRuntime()")
+    assert p.locator("#startupStage").count() == 0
+    p.evaluate("S.sys.vllm.ready = false; S.sys.vllm.state = 'exited'; renderRuntime()")
+    assert p.locator("#startupStage").count() == 0
+    p.evaluate("""() => {
+        S.sys.vllm.state = 'running';
+        S.sys.vllm.startup = {elapsed_seconds: 5, stage: 'Starting engine',
+            error: 'Startup logs unavailable: logging driver does not support reading'};
+        renderRuntime();
+    }""")
+    assert "Startup logs unavailable" in p.locator("#startupActivity").inner_text()
+    p.reload()
+    p.wait_for_selector("#startupStage")
+    p.evaluate("""() => {
+        S.sys.vllm.startup.stage = 'Warming up';
+        S.sys.vllm.startup.progress = null;
+        S.sys.vllm.startup.last_log_at -= 60;
+        renderRuntime();
+    }""")
+    return p
+
+
+def capturing(b):
+    p = starting(b)
+    p.evaluate("""() => {
+        S.sys.vllm.startup.stage = 'Capturing CUDA graphs';
+        S.sys.vllm.startup.progress = {completed: 12, total: 24};
+        renderRuntime();
+    }""")
+    assert p.locator("#startupStage").inner_text() == "Capturing CUDA graphs · 12 / 24 graphs"
+    return p
+
+
 def update(b):
     v = fixture("version")
     v["update_available"] = True
@@ -193,7 +271,8 @@ def update(b):
 
 SCENES = {
     f.__name__.replace("_dialog", ""): f
-    for f in (overview, connect, playground, run_dialog, discover, downloading, downloading_run, console, update)
+    for f in (overview, connect, playground, run_dialog, discover, downloading, downloading_run,
+              console, starting, warming, capturing, update)
 }
 
 
