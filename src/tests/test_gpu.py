@@ -22,3 +22,17 @@ def test_nvidia_ngc_image_gets_vllm_serve(monkeypatch):
     assert runner._command(args) == args
     monkeypatch.setattr(runner, "IMAGE", "nvcr.io/nvidia/vllm:26.02-py3")
     assert runner._command(args) == ["vllm", "serve", "org/m", "--max-model-len", "8192"]
+
+
+def test_library_hides_config_only_cache_entries(monkeypatch):
+    from types import SimpleNamespace as NS
+
+    from app import downloads
+
+    def repo(name, files):
+        rev = NS(files=[NS(file_name=f) for f in files], commit_hash="h")
+        return NS(repo_id=name, repo_type="model", size_on_disk=1, last_accessed=0, revisions=[rev])
+
+    repos = [repo("org/stub", ["config.json"]), repo("org/real", ["config.json", "model.safetensors"])]
+    monkeypatch.setattr(downloads, "scan_cache_dir", lambda: NS(repos=repos))
+    assert [m["id"] for m in downloads.cached_models()] == ["org/real"]
