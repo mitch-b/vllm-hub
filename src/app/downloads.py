@@ -145,6 +145,11 @@ def get(job_id: str) -> Job | None:
     return _jobs.get(job_id)
 
 
+def _has_weights(repo) -> bool:
+    # Discover caches config.json for context previews; that stub is not a downloaded model.
+    return any(f.file_name.endswith((".safetensors", ".bin")) for rev in repo.revisions for f in rev.files)
+
+
 def cached_models() -> list[dict]:
     try:
         info = scan_cache_dir()
@@ -152,7 +157,7 @@ def cached_models() -> list[dict]:
         return []
     models = [
         {"id": r.repo_id, "size_gib": round(r.size_on_disk / 2**30, 1), "last_used": r.last_accessed}
-        for r in info.repos if r.repo_type == "model"
+        for r in info.repos if r.repo_type == "model" and _has_weights(r)
     ]
     return sorted(models, key=lambda m: m["id"].lower())
 
