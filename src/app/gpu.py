@@ -20,15 +20,18 @@ QUERY = ["nvidia-smi", "--query-gpu=name,memory.total,memory.used,driver_version
          "--format=csv,noheader,nounits"]
 
 
-def _system_memory_mib() -> int | None:
+def _system_memory_mib() -> tuple[int, int] | None:
+    """(total, used) MiB of system RAM; used excludes reclaimable cache like MemAvailable."""
+    values = {}
     try:
         with open("/proc/meminfo", encoding="ascii") as fh:
             for line in fh:
-                if line.startswith("MemTotal:"):
-                    return int(line.split()[1]) // 1024
-    except (OSError, ValueError, IndexError):
-        pass
-    return None
+                key, _, rest = line.partition(":")
+                if key in ("MemTotal", "MemAvailable"):
+                    values[key] = int(rest.split()[0]) // 1024
+        return values["MemTotal"], max(0, values["MemTotal"] - values["MemAvailable"])
+    except (OSError, ValueError, IndexError, KeyError):
+        return None
 
 
 def _parse(output: str) -> dict:
@@ -38,10 +41,11 @@ def _parse(output: str) -> dict:
         return {"name": name, "total_mib": int(total), "used_mib": int(used), "driver": driver,
                 "gpu_count": len(rows), "unified_memory": False}
     # Unified-memory GPUs (DGX Spark GB10) report memory.total as [N/A]; the GPU shares system RAM.
-    total_mib = _system_memory_mib()
-    if total_mib is None:
+    memory = _system_memory_mib()
+    if memory is None:
         raise ValueError("GPU reports no memory total and /proc/meminfo is unavailable")
-    return {"name": name, "total_mib": total_mib, "used_mib": 0, "driver": driver,
+    total_mib, used_mib = memory
+    return {"name": name, "total_mib": total_mib, "used_mib": used_mib, "driver": driver,
             "gpu_count": len(rows), "unified_memory": True}
 
 

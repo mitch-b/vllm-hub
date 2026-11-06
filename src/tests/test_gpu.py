@@ -8,10 +8,10 @@ def test_parse_discrete_gpu():
 
 
 def test_parse_unified_memory_gpu_uses_system_ram(monkeypatch):
-    monkeypatch.setattr(gpu, "_system_memory_mib", lambda: 124000)
+    monkeypatch.setattr(gpu, "_system_memory_mib", lambda: (124000, 5000))
     info = gpu._parse("NVIDIA GB10, [N/A], [N/A], 580.95\n")
     assert info["name"] == "NVIDIA GB10"
-    assert info["total_mib"] == 124000 and info["used_mib"] == 0
+    assert info["total_mib"] == 124000 and info["used_mib"] == 5000
     assert info["unified_memory"] is True
 
 
