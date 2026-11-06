@@ -210,7 +210,7 @@ def start(model_id: str, context: int | None = None, util: float | None = None,
             raise StartCancelled("Model start cancelled")
         _ensure_network()
         client().containers.run(
-            IMAGE, args, name=CONTAINER, detach=True, ipc_mode="host",
+            IMAGE, _command(args), name=CONTAINER, detach=True, ipc_mode="host",
             restart_policy={"Name": "unless-stopped"},  # comes back with Docker after a reboot
             device_requests=[DeviceRequest(count=-1, capabilities=[["gpu"]])],
             ports={"8000/tcp": HOST_PORT}, network=NETWORK, environment=env,
@@ -219,6 +219,13 @@ def start(model_id: str, context: int | None = None, util: float | None = None,
                     "vllm-hub.managed": "true"},
         )
     return {"model": model_id, "context": context, "util": util, "args": args}
+
+
+def _command(args: list[str]) -> list[str]:
+    # NVIDIA's NGC vLLM image (DGX Spark) has a generic entrypoint, so it needs the explicit `vllm serve`.
+    if "nvidia/vllm" in IMAGE and args[:1] == ["--model"]:
+        return ["vllm", "serve", args[1], *args[2:]]
+    return args
 
 
 def log_stream(tail: int = 100):
