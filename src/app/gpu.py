@@ -20,11 +20,29 @@ QUERY = ["nvidia-smi", "--query-gpu=name,memory.total,memory.used,driver_version
          "--format=csv,noheader,nounits"]
 
 
+def _system_memory_mib() -> int | None:
+    try:
+        with open("/proc/meminfo", encoding="ascii") as fh:
+            for line in fh:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) // 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
 def _parse(output: str) -> dict:
     rows = output.strip().splitlines()
     name, total, used, driver = [part.strip() for part in rows[0].split(",")]
-    return {"name": name, "total_mib": int(total), "used_mib": int(used), "driver": driver,
-            "gpu_count": len(rows)}
+    if total.isdigit():
+        return {"name": name, "total_mib": int(total), "used_mib": int(used), "driver": driver,
+                "gpu_count": len(rows), "unified_memory": False}
+    # Unified-memory GPUs (DGX Spark GB10) report memory.total as [N/A]; the GPU shares system RAM.
+    total_mib = _system_memory_mib()
+    if total_mib is None:
+        raise ValueError("GPU reports no memory total and /proc/meminfo is unavailable")
+    return {"name": name, "total_mib": total_mib, "used_mib": 0, "driver": driver,
+            "gpu_count": len(rows), "unified_memory": True}
 
 
 def _docker_gpu() -> dict | None:
