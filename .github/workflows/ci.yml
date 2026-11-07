@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: astral-sh/setup-uv@v7
         with:
@@ -81,7 +81,7 @@ jobs:
     timeout-minutes: 10
     container: mcr.microsoft.com/playwright/python:v1.49.0-noble
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Capture
         run: |
@@ -107,7 +107,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Lint Dockerfile
         run: docker run --rm -i hadolint/hadolint:v2.14.0 hadolint --failure-threshold info - < Dockerfile
