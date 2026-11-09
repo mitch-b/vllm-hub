@@ -16,6 +16,17 @@ must preserve the Connect prompt + output = context invariant.
   - per-family flags (tool-call and reasoning parsers, KV dtype),
   - the fit ratings,
   - `choose_context`, a conservative context estimate.
+- Packed NVFP4/MXFP4 catalog sizes come from the safetensors index's
+  `metadata.total_size`, not logical dtype parameter counts. Missing packed-size
+  metadata must remain unknown with a surfaced error, not an inflated fit verdict.
+- The exact official Nemotron Super NVFP4 checkpoint on a single GB10 with at least
+  110 GiB unified memory gets NVIDIA's Spark recipe automatically. `profiles.py`
+  owns the pinned engine, environment, MTP and parser flags; `runner.py` maps the
+  revision-pinned official parser through the shared HF cache. Graphs default on
+  only for this profile. Auto initially targets 1,000,000 tokens, then prefers
+  measured capacity capped at that recipe limit rather than config's 262,144.
+  Keep the UI's recipe target distinct from measured capacity. Other hardware,
+  models and native engines retain their defaults.
 - `src/app/capacity.py` parses vLLM's "GPU KV cache size: N tokens" log line and stores the value per model and GPU utilization in `/state/capacity.json`. It is covered by `src/tests/test_capacity.py`.
   - `fit_context` is N × 0.97, floored to a multiple of 1024, capped at the model's max, with a minimum of 2048.
   - **Auto** context prefers this learned value over the estimate.

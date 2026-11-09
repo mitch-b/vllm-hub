@@ -33,3 +33,12 @@ def test_auto_context_uses_model_limit(tmp_path, monkeypatch):
     monkeypatch.setattr(capacity, "model_max_len", lambda m: 262144)
     assert capacity.auto_context("org/m", 0.9) == 262144
     assert capacity.auto_context("org/other", 0.9) is None
+
+
+def test_explicit_recipe_limit_overrides_config_but_preserves_margin(tmp_path, monkeypatch):
+    monkeypatch.setattr(capacity, "STATE", tmp_path / "capacity.json")
+    monkeypatch.setattr(capacity, "model_max_len", lambda m: 262144)
+    capacity.record("org/model", 0.9, 900000)
+    assert capacity.auto_context("org/model", 0.9, 1_000_000) == 872448
+    capacity.record("org/model", 0.9, 2000000)
+    assert capacity.auto_context("org/model", 0.9, 1_000_000) == 1_000_000

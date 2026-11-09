@@ -3,6 +3,24 @@ import pytest
 from app import profiles as p
 
 
+@pytest.mark.parametrize("model,gpu,expected", [
+    (p.NEMOTRON_SUPER, {"name": "NVIDIA GB10", "total_mib": 124000,
+                        "unified_memory": True, "gpu_count": 1}, True),
+    (p.NEMOTRON_SUPER, None, False),
+    (p.NEMOTRON_SUPER, {"name": "NVIDIA GB10", "total_mib": 64000,
+                        "unified_memory": True, "gpu_count": 1}, False),
+    (p.NEMOTRON_SUPER, {"name": "NVIDIA GB10", "total_mib": 248000,
+                        "unified_memory": True, "gpu_count": 2}, False),
+    (p.NEMOTRON_SUPER, {"name": "NVIDIA H200", "total_mib": 144000,
+                        "unified_memory": False, "gpu_count": 1}, False),
+    ("community/Nemotron-120B-NVFP4", {"name": "NVIDIA GB10", "total_mib": 124000,
+                                      "unified_memory": True, "gpu_count": 1}, False),
+])
+def test_spark_recipe_is_exact_model_and_hardware(model, gpu, expected):
+    assert p.spark_recipe(model, gpu) is expected
+    assert bool(p.launch_profile(model, gpu)) is expected
+
+
 def test_weights_gib_counts_packed_int4_as_i32():
     # the Hub reports 8 INT4 params per packed I32 word, so I32 weighs 0.5 byte per counted param
     gib = p.weights_gib({"I32": 31_406_948_352, "BF16": 4_523_902_832, "F32": 20_971_520})

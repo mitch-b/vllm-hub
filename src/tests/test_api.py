@@ -1,3 +1,4 @@
+import json
 import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -8,7 +9,7 @@ import pytest
 from docker.errors import APIError, NotFound
 from fastapi.testclient import TestClient
 
-from app import downloads, hf, hosting, main, model_runner, runner
+from app import capacity, downloads, hf, hosting, main, model_runner, profiles, runner
 
 GPU = {"name": "Test GPU", "total_mib": 24564, "used_mib": 1000, "driver": "1", "gpu_count": 1}
 INDEX = Path(main.STATIC / "index.html").read_text(encoding="utf-8")
@@ -434,6 +435,7 @@ def runtime(api, monkeypatch):
         containers.current = None
 
     def run(image, args, **kwargs):
+        containers.image, containers.args = image, args
         containers.runs.append(kwargs)
         containers.current = SimpleNamespace(
             id=f"container-{len(containers.runs)}", status="running", labels=kwargs["labels"],
@@ -449,6 +451,128 @@ def runtime(api, monkeypatch):
     monkeypatch.setattr(runner, "_start_cancel", None)
     monkeypatch.setattr(runner.httpx, "get", lambda *a, **kw: SimpleNamespace(status_code=503))
     return containers
+
+
+@pytest.fixture
+def spark(api, runtime, monkeypatch):
+    gpu = {**GPU, "name": "NVIDIA GB10", "total_mib": 124000, "unified_memory": True}
+    monkeypatch.setattr(main, "gpu_info", lambda: gpu)
+    monkeypatch.setattr(runner, "gpu_info", lambda: gpu)
+    monkeypatch.setattr(runner, "_spark_parser", lambda: "/root/.cache/huggingface/hub/parser.py")
+    runtime.images = SimpleNamespace(get=lambda image: None)
+    monkeypatch.setattr(runner, "client", lambda: SimpleNamespace(containers=runtime, images=runtime.images))
+    monkeypatch.setattr(capacity, "auto_context", lambda *args: None)
+    return runtime
+
+
+def test_spark_run_matches_official_recipe(api, spark, monkeypatch):
+    monkeypatch.setenv("HF_TOKEN", "test-token")
+    monkeypatch.setattr(runner, "IMAGE", "nvcr.io/nvidia/vllm:old")
+    response = api.post("/api/run", json={"repo_id": profiles.NEMOTRON_SUPER})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["context"] == 1_000_000 and body["util"] == 0.9
+    assert spark.image == profiles.SPARK_IMAGE == body["image"]
+    args = spark.args
+    for flag, value in {
+        "--max-model-len": "1000000", "--kv-cache-dtype": "fp8", "--max-num-seqs": "4",
+        "--moe-backend": "marlin", "--mamba_ssm_cache_dtype": "float16", "--quantization": "fp4",
+        "--reasoning-parser": "super_v3", "--tool-call-parser": "qwen3_coder",
+        "--reasoning-parser-plugin": "/root/.cache/huggingface/hub/parser.py",
+        "--tensor-parallel-size": "1", "--pipeline-parallel-size": "1", "--data-parallel-size": "1",
+    }.items():
+        assert args.count(flag) == 1 and args[args.index(flag) + 1] == value
+    assert json.loads(args[args.index("--speculative_config") + 1]) == {
+        "method": "mtp", "num_speculative_tokens": 3, "model": profiles.SPARK_MTP, "moe_backend": "triton",
+    }
+    assert "--enforce-eager" not in args and "hermes" not in args
+    assert {"--async-scheduling", "--enable-chunked-prefill", "--trust-remote-code"}.issubset(args)
+    assert spark.runs[0]["environment"] == {**profiles.SPARK_ENV, "HF_TOKEN": "test-token"}
+    assert spark.runs[0]["ipc_mode"] == "host"
+    assert spark.runs[0]["volumes"][runner.CACHE_SOURCE]["bind"] == "/root/.cache/huggingface"
+
+
+def test_spark_run_honors_manual_context_graphs_and_util(api, spark):
+    response = api.post("/api/run", json={
+        "repo_id": profiles.NEMOTRON_SUPER, "context": 524288, "graphs": False, "util": 0.85,
+    })
+    assert response.status_code == 200
+    assert response.json()["context"] == 524288 and response.json()["util"] == 0.85
+    assert "--enforce-eager" in spark.args
+
+
+def test_spark_auto_uses_learned_capacity(api, spark, monkeypatch):
+    monkeypatch.setattr(capacity, "auto_context", lambda model, util, maximum: min(524288, maximum))
+    response = api.post("/api/run", json={"repo_id": profiles.NEMOTRON_SUPER})
+    assert response.status_code == 200 and response.json()["context"] == 524288
+
+
+@pytest.mark.parametrize("context", [0, -1, 1000001])
+def test_spark_context_validation_before_stopping(api, spark, context):
+    assert api.post("/api/run", json={"repo_id": "org/model", "context": 8192}).status_code == 200
+    old = spark.current
+    response = api.post("/api/run", json={"repo_id": profiles.NEMOTRON_SUPER, "context": context})
+    assert response.status_code == 400
+    assert spark.current is old
+
+
+def test_non_spark_run_keeps_generic_settings(api, runtime, monkeypatch):
+    monkeypatch.setattr(runner, "_spark_parser", lambda: pytest.fail("Not a Spark launch"))
+    assert api.post("/api/run", json={
+        "repo_id": profiles.NEMOTRON_SUPER, "context": 8192,
+    }).status_code == 200
+    assert runtime.image == runner.IMAGE
+    assert "--enforce-eager" in runtime.args
+    assert "VLLM_ALLOW_LONG_MAX_MODEL_LEN" not in runtime.runs[0]["environment"]
+
+
+def test_spark_image_pull_failure_is_reported(api, spark):
+    def fail(image):
+        raise APIError("Recipe image could not be pulled")
+    spark.images.get = fail
+    response = api.post("/api/run", json={"repo_id": profiles.NEMOTRON_SUPER})
+    assert response.status_code == 500
+    assert "Recipe image could not be pulled" in response.json()["detail"]
+    assert not spark.runs
+
+
+def test_spark_cancel_during_parser_preparation_prevents_image_pull(api, spark, monkeypatch):
+    preparing, release = Event(), Event()
+    def parser():
+        preparing.set()
+        assert release.wait(5)
+        return "/root/.cache/huggingface/hub/parser.py"
+    monkeypatch.setattr(runner, "_spark_parser", parser)
+    monkeypatch.setattr(runner, "_ensure_image", lambda image: pytest.fail("Cancelled before image pull"))
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(api.post, "/api/run", json={"repo_id": profiles.NEMOTRON_SUPER})
+        try:
+            assert preparing.wait(2)
+            assert api.post("/api/stop").status_code == 200
+            release.set()
+            assert pending.result(timeout=2).status_code == 409
+            assert not spark.runs
+        finally:
+            release.set()
+
+
+def test_spark_parser_failure_is_reported(api, spark, monkeypatch):
+    def parser():
+        raise OSError("Official parser unavailable")
+    monkeypatch.setattr(runner, "_spark_parser", parser)
+    response = api.post("/api/run", json={"repo_id": profiles.NEMOTRON_SUPER})
+    assert response.status_code == 500
+    assert "Official parser unavailable" in response.json()["detail"]
+    assert not spark.runs
+
+
+def test_spark_library_exposes_recipe_defaults(api, spark, monkeypatch):
+    monkeypatch.setattr(downloads, "cached_models", lambda: [
+        {"id": profiles.NEMOTRON_SUPER, "size_gib": 74.8, "last_used": 0},
+    ])
+    row = api.get("/api/models").json()[0]
+    assert row["max_context"] == row["context_hint"] == 1_000_000
+    assert row["launch_profile"]["graphs"] is True
 
 
 def test_stop_removes_loading_container_and_explicit_run_still_works(api, runtime):

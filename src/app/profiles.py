@@ -1,6 +1,7 @@
 """Pure logic: model sizing, GPU fit verdicts, context choice and vLLM flag profiles."""
 from __future__ import annotations
 
+import json
 import re
 
 GIB = 2**30
@@ -21,6 +22,44 @@ FIT_COMFORT_GIB = 3.0
 KV_BYTES_PER_TOKEN_PER_GIB = 4096
 
 UNSUPPORTED_TAGS = {"gguf", "mlx", "onnx", "coreml", "tflite"}
+
+NEMOTRON_SUPER = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4"
+SPARK_IMAGE = "vllm/vllm-openai:v0.27.1"
+SPARK_CONTEXT = 1_000_000
+SPARK_MTP = "nvidia/Nemotron-3-Super-120B-A12B-BF16-MTPv2"
+SPARK_ENV = {
+    "VLLM_NVFP4_GEMM_BACKEND": "marlin",
+    "VLLM_ALLOW_LONG_MAX_MODEL_LEN": "1",
+    "VLLM_FLASHINFER_ALLREDUCE_BACKEND": "trtllm",
+    "VLLM_USE_FLASHINFER_MOE_FP4": "0",
+}
+
+
+def spark_recipe(model_id: str, gpu: dict | None) -> bool:
+    return bool(model_id == NEMOTRON_SUPER and gpu and gpu.get("unified_memory")
+                and "GB10" in gpu["name"].upper() and gpu.get("gpu_count") == 1
+                and gpu["total_mib"] >= 110 * 1024)
+
+
+def launch_profile(model_id: str, gpu: dict | None) -> dict | None:
+    if not spark_recipe(model_id, gpu):
+        return None
+    return {"name": "NVIDIA DGX Spark recipe", "max_context": SPARK_CONTEXT,
+            "default_context": SPARK_CONTEXT, "graphs": True}
+
+
+def spark_flags(parser_path: str) -> list[str]:
+    return [
+        "--async-scheduling", "--dtype", "auto",
+        "--tensor-parallel-size", "1", "--pipeline-parallel-size", "1", "--data-parallel-size", "1",
+        "--trust-remote-code", "--enable-chunked-prefill", "--moe-backend", "marlin",
+        "--mamba_ssm_cache_dtype", "float16", "--quantization", "fp4",
+        "--speculative_config", json.dumps({
+            "method": "mtp", "num_speculative_tokens": 3, "model": SPARK_MTP, "moe_backend": "triton",
+        }),
+        "--reasoning-parser-plugin", parser_path, "--reasoning-parser", "super_v3",
+        "--enable-auto-tool-choice", "--tool-call-parser", "qwen3_coder",
+    ]
 
 
 def weights_gib(safetensors_params: dict | None) -> float | None:
@@ -115,12 +154,13 @@ def served_name(model_id: str) -> str:
 
 
 def build_vllm_args(model_id: str, context: int, util: float, graphs: bool = False,
-                    max_seqs: int = 2, extra: list[str] | None = None) -> list[str]:
+                    max_seqs: int = 2, extra: list[str] | None = None,
+                    flags: list[str] | None = None) -> list[str]:
     args = [
         "--model", model_id, "--served-model-name", served_name(model_id),
         "--max-model-len", str(context), "--kv-cache-dtype", "fp8",
         "--gpu-memory-utilization", f"{util:.2f}", "--max-num-seqs", str(max_seqs),
-        *model_flags(model_id),
+        *(model_flags(model_id) if flags is None else flags),
     ]
     if not graphs:
         args.append("--enforce-eager")
