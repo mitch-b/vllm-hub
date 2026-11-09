@@ -171,6 +171,10 @@ ol.steps .field { margin-top: 6px; }
 .tile .k { font-size: 11.5px; color: var(--subtle); font-weight: 550; text-transform: uppercase; letter-spacing: .06em; }
 .tile .v { font-size: 22px; font-weight: 650; letter-spacing: -.02em; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tile .v small { font-size: 12px; color: var(--subtle); font-weight: 500; margin-left: 4px; letter-spacing: 0; }
+.tile.collapsed .k,
+.tile.collapsed .v {
+  display: none;
+}
 svg.spark { display: block; width: calc(100% + 28px); height: 44px; margin: 6px -14px 0; }
 svg.spark .area { fill: var(--accent-soft); }
 svg.spark .line { fill: none; stroke: var(--accent); stroke-width: 1.6; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
@@ -495,6 +499,7 @@ const S = {
   sys: null, local: [], jobs: [], rec: null, results: null, query: '', searching: false, sort: 'recommended',
   tab: store.get('tab', 'library'), showAll: false, showCommunity: false, expanded: new Set(), dismissed: new Set(),
   open: new Set(), sysAt: null, runAfter: {}, prevJob: {}, chat: [], chatBusy: false, logsFor: null,
+  activityCollapsed: false,
 };
 
 /* ---------- Toasts & dialogs ---------- */
@@ -631,16 +636,46 @@ function renderRuntime() {
         <div class="rt-actions">${feature('logs') ? toggles(['console', 'term', 'Console']) : ''}
           <button class="btn danger" data-act="stop">${icon('stop')}Cancel</button></div></div>
         <div class="progress indeterminate"><i></i></div>`;
-    else if (p === 'ready') html = `<div class="rt-top"><div style="min-width:0">
-        <div class="eyebrow"><span class="dot" style="background:var(--ok);box-shadow:0 0 0 4px var(--ok-soft)"></span>Serving</div>
-        <h2 class="rt-title">${nameHtml(v.model)}</h2>
-        <div class="rt-sub"><span class="badge">${fmtCtx(+v.context)} context</span><span class="badge">port ${esc(v.port)}</span>${nativeBackend() ? `<span class="badge">${esc(v.engine || 'Model Runner')}</span>` : ''}</div></div>
-        <div class="rt-actions">${toggles(['connect', 'term', 'Connect'], ['playground', 'chat', 'Try it'])}${feature('activity') ? toggles(['activity', 'activity', 'Activity']) : ''}${feature('logs') ? toggles(['console', 'code', 'Console']) : ''}
-          <button class="btn danger" data-act="stop">${icon('stop')}Stop</button></div></div>
-        <div class="endpoint">
-          <div class="field"><label>Base URL</label><code>${esc(v.url)}</code><button class="btn ghost icon sm" data-act="copy" data-text="${esc(v.url)}" aria-label="Copy base URL">${icon('copy')}</button></div>
-          <div class="field"><label>Model</label><code>${esc(servedName())}</code><button class="btn ghost icon sm" data-act="copy" data-text="${esc(servedName())}" aria-label="Copy model name">${icon('copy')}</button></div>
-        </div>`;
+    else if (p === 'ready') {
+      let activityHtml = '';
+      if (S.act && S.act.serving) {
+        const a = S.act;
+        const c = a.current;
+        const load = s => s.running + s.waiting;
+        const tile = (label, value, unit, pick, floor) => {
+          const peak = Math.max(0, ...a.history.map(s => pick(s) || 0));
+          const sparkHtml = spark(a, pick, Math.max(floor, peak));
+          const collapsedClass = S.activityCollapsed ? 'collapsed' : '';
+          return `<div class="tile ${collapsedClass}" title="Last ${Math.round(a.window / 60)} min, peak ${fmtRate(peak)}${unit === '%' ? '%' : ' ' + unit.split(' ')[0]}">
+            <div class="k">${label}</div><div class="v">${value}<small>${unit}</small></div>${sparkHtml}
+          </div>`;
+        };
+        activityHtml = `
+          <div class="activity-bar">
+            <button class="btn ghost icon sm" data-act="toggle-activity-collapse" aria-label="Collapse activity">${S.activityCollapsed ? icon('chevron-down') : icon('chevron-up')}</button>
+            <div class="activity-tiles">
+              ${tile('Generating', fmtRate(c.gen_tps), 'tok/s', s => s.gen_tps, 1)}
+              ${tile('Prompt', fmtRate(c.prompt_tps), 'tok/s', s => s.prompt_tps, 1)}
+              ${tile('Requests', c.running, c.waiting ? `active · ${c.waiting} queued` : 'active', load, 1)}
+              ${tile('KV cache', Math.round(c.kv_cache * 100), '%', s => s.kv_cache * 100, 100)}
+            </div>
+          </div>
+        `;
+      } else {
+        activityHtml = `<div class="activity-bar"><div class="subtle">Collecting the first samples from vLLM…</div></div>`;
+      }
+      html = `<div class="rt-top"><div style="min-width:0">
+          <div class="eyebrow"><span class="dot" style="background:var(--ok);box-shadow:0 0 0 4px var(--ok-soft)"></span>Serving</div>
+          <h2 class="rt-title">${nameHtml(v.model)}</h2>
+          <div class="rt-sub"><span class="badge">${fmtCtx(+v.context)} context</span><span class="badge">port ${esc(v.port)}</span>${nativeBackend() ? `<span class="badge">${esc(v.engine || 'Model Runner')}</span>` : ''}</div></div>
+          <div class="rt-actions">${toggles(['connect', 'term', 'Connect'], ['playground', 'chat', 'Try it'])}${feature('activity') ? toggles(['activity', 'activity', 'Activity']) : ''}${feature('logs') ? toggles(['console', 'code', 'Console']) : ''}
+            <button class="btn danger" data-act="stop">${icon('stop')}Stop</button></div></div>
+          <div class="endpoint">
+            <div class="field"><label>Base URL</label><code>${esc(v.url)}</code><button class="btn ghost icon sm" data-act="copy" data-text="${esc(v.url)}" aria-label="Copy base URL">${icon('copy')}</button></div>
+            <div class="field"><label>Model</label><code>${esc(servedName())}</code><button class="btn ghost icon sm" data-act="copy" data-text="${esc(servedName())}" aria-label="Copy model name">${icon('copy')}</button></div>
+          </div>
+          ${activityHtml}`;
+    }
     if (!support.available && ['loading', 'ready', 'exited'].includes(p)) {
       html += `<div class="rt-sub">${esc(support.message)}</div>`;
     }
@@ -1248,6 +1283,10 @@ document.addEventListener('click', e => {
         { icon: 'trash', label: 'Delete from disk', danger: true, run: () => deleteModel(id) },
       ]); break; }
     case 'chat-clear': S.chat = []; renderChat(); break;
+    case 'toggle-activity-collapse':
+      S.activityCollapsed = !S.activityCollapsed;
+      renderRuntime();
+      break;
     case 'logs-copy': copy($('#logs').textContent, 'Console copied'); break;
   }
 });
