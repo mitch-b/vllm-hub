@@ -65,6 +65,24 @@ def _timestamp(value: str) -> float | None:
         return None
 
 
+_ERROR_LINE = re.compile(r"(?:Error|Exception)\b.*", re.IGNORECASE)
+
+
+def _crash_reason(c) -> str:
+    """Last error from a crash-looping container, with a hint for unsupported-architecture failures."""
+    try:
+        logs = c.logs(tail=60).decode(errors="replace")
+    except DockerException:
+        return "vLLM keeps crashing; open Console for details."
+    logs = re.sub(r"\x1b\[[0-?]*[ -/]*[1697 1697~]", "", logs)
+    lines = [m.group(0).strip() for line in logs.splitlines() if (m := _ERROR_LINE.search(line))]
+    reason = lines[-1][:300] if lines else "vLLM keeps crashing; open Console for details."
+    if re.search(r"does not recognize this architecture|not supported|unsupported", logs, re.IGNORECASE):
+        reason += (" The vLLM image may be too old for this model: set VLLM_IMAGE to a newer image,"
+                   " then Stop and Run again.")
+    return reason
+
+
 def _startup(c) -> dict:
     """Report only milestones and counts actually emitted by this startup attempt."""
     started = _timestamp(c.attrs.get("State", {}).get("StartedAt", ""))
@@ -77,6 +95,7 @@ def _startup(c) -> dict:
     }
     if c.status == "restarting":
         result["stage"] = "Container restarting"
+        result["error"] = _crash_reason(c)
     if not active:
         return result
     if not started:
