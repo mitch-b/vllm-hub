@@ -1266,6 +1266,21 @@ document.addEventListener('keydown', e => {
   if (e.key === '/' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && !document.querySelector('dialog[open]')) {
     e.preventDefault(); S.tab = 'discover'; store.set('tab', 'discover'); renderTabs(); renderDiscover(); $('#q').focus();
   }
+  if (e.key === 'Escape' && !document.getElementById('helpModal').hidden) {document.getElementById('helpModal').hidden = true;}
+});
+
+/* Show help modal */
+document.addEventListener('click', e => {
+  const btn = e.target.closest('[data-act="help-open"]');
+  if (btn) {
+    const modal = document.getElementById('helpModal');
+    if (modal) modal.hidden = false;
+  }
+});
+  if (e.key === 'Escape') closeMenu();
+  if (e.key === '/' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && !document.querySelector('dialog[open]')) {
+    e.preventDefault(); S.tab = 'discover'; store.set('tab', 'discover'); renderTabs(); renderDiscover(); $('#q').focus();
+  }
 });
 
 /* ---------- Boot ---------- */
