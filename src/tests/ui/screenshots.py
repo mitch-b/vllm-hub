@@ -177,6 +177,30 @@ def spark_mobile(b):
     return p
 
 
+def spark_preparing(b):
+    data = fixture("spark")
+    system = fixture("system")
+    system.update(gpu=data["gpu"], recommended_util=0.9, image="vllm/vllm-openai:v0.27.1")
+    system["vllm"] = {
+        "docker_ok": True, "state": "created", "ready": False,
+        "model": data["model"]["id"], "context": 1000000, "util": 0.9,
+        "startup": {
+            "container_id": None, "started_at": CAPTURED - 60, "elapsed_seconds": 60,
+            "stage": "Preparing engine image", "progress": None, "last_log_at": None, "error": None,
+            "message": "Preparing the engine before container startup. Downloads may take several minutes.",
+        },
+    }
+    p = open_page(b, {"system": system, "models": [], "recommended": [data["model"]], "jobs": []})
+    p.wait_for_selector("#startupStage")
+    assert p.locator("#startupStage").inner_text() == "Preparing engine image"
+    assert p.locator('[data-act="stop"]:visible').inner_text() == "Cancel"
+    p.reload()
+    p.wait_for_selector("#startupStage")
+    assert p.locator("#startupStage").inner_text() == "Preparing engine image"
+    assert p.locator('[data-act="stop"]:visible').is_visible()
+    return p
+
+
 def discover(b):
     p = open_page(b)
     p.click("#tab-discover")
@@ -820,6 +844,7 @@ def startup_failure(b):
 SCENES = {
     f.__name__.replace("_dialog", ""): f
     for f in (overview, connect, playground, activity, run_dialog, spark_discover, spark_run_dialog, spark_mobile,
+              spark_preparing,
               discover, discover_sort, discover_mobile,
               downloading, downloading_run,
               download_finalizing, download_completion, console, starting, startup_failure, warming, capturing,

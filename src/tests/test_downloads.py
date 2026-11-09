@@ -2,7 +2,19 @@ from types import SimpleNamespace
 
 import pytest
 
-from app import downloads
+from app import downloads, profiles
+
+
+def test_auxiliary_mtp_head_is_not_a_runnable_cached_model(monkeypatch):
+    def repo(model):
+        return SimpleNamespace(
+            repo_id=model, repo_type="model", size_on_disk=1024, last_accessed=0,
+            revisions=[SimpleNamespace(files=[SimpleNamespace(file_name="model.safetensors")])],
+        )
+    monkeypatch.setattr(downloads, "scan_cache_dir", lambda: SimpleNamespace(
+        repos=[repo(profiles.NEMOTRON_SUPER), repo(profiles.SPARK_MTP), repo("org/standalone")],
+    ))
+    assert {m["id"] for m in downloads.cached_models()} == {profiles.NEMOTRON_SUPER, "org/standalone"}
 
 
 @pytest.fixture

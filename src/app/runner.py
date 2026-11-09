@@ -29,6 +29,7 @@ BASE_URL = os.getenv("VLLM_BASE_URL", f"http://{CONTAINER}:8000")
 _client: docker.DockerClient | None = None
 _lifecycle_lock = RLock()
 _start_cancel: Event | None = None
+_preparation: dict | None = None
 
 
 class StartCancelled(RuntimeError):
@@ -158,6 +159,20 @@ def status() -> dict:
         c = _container()
     except Exception as exc:
         return {"docker_ok": False, "error": str(exc), "state": "unknown"}
+    with _lifecycle_lock:
+        if _preparation is not None:
+            preparation = dict(_preparation)
+            started = preparation.pop("started_at")
+            stage = preparation.pop("stage")
+            return {
+                "docker_ok": True, "state": "created", "ready": False, **preparation,
+                "startup": {
+                    "container_id": None, "started_at": started,
+                    "elapsed_seconds": max(0, time.time() - started), "stage": stage,
+                    "progress": None, "last_log_at": None, "error": None,
+                    "message": "Preparing the engine before container startup. Downloads may take several minutes.",
+                },
+            }
     if c is None:
         return {"docker_ok": True, "state": "stopped", "model": None, "ready": False}
     state = c.status
@@ -190,9 +205,11 @@ def status() -> dict:
 
 
 def stop() -> None:
+    global _preparation
     with _lifecycle_lock:
         if _start_cancel is not None:
             _start_cancel.set()
+        _preparation = None
         c = _container()
         if c is not None:
             c.remove(force=True)
@@ -226,24 +243,53 @@ def _ensure_image(image: str) -> None:
         client().images.pull(image)
 
 
+def _preparing(cancel: Event, stage: str) -> None:
+    with _lifecycle_lock:
+        if cancel.is_set():
+            raise StartCancelled("Model start cancelled")
+        if _preparation is not None:
+            _preparation["stage"] = stage
+
+
 def start(model_id: str, context: int | None = None, util: float | None = None,
           graphs: bool | None = None, extra: list[str] | None = None, weights_gib: float | None = None) -> dict:
-    global _start_cancel
+    global _start_cancel, _preparation
     initial_gpu = gpu_info()
     if initial_gpu is None:
         raise GPUUnavailable("CUDA vLLM requires an NVIDIA GPU. Enable Docker Model Runner for Metal or CPU inference.")
+    if model_id == profiles.SPARK_MTP:
+        raise ValueError("This MTP head is an auxiliary checkpoint, not a standalone language model.")
     spark = profiles.spark_recipe(model_id, initial_gpu)
     if spark and context is not None and not 2048 <= context <= profiles.SPARK_CONTEXT:
         raise ValueError("NVIDIA DGX Spark recipe context must be between 2048 and 1000000 tokens.")
     with _lifecycle_lock:
         stop()
         cancel = _start_cancel = Event()
+        if spark:
+            _preparation = {
+                "model": model_id, "context": context or profiles.SPARK_CONTEXT,
+                "util": util if util is not None else 0.90, "image": profiles.SPARK_IMAGE,
+                "started_at": time.time(), "stage": "Waiting for GPU memory",
+            }
+    try:
+        return _launch(model_id, context, util, graphs, extra, weights_gib, cancel, spark)
+    finally:
+        with _lifecycle_lock:
+            if _start_cancel is cancel:
+                _preparation = None
+
+
+def _launch(model_id: str, context: int | None, util: float | None, graphs: bool | None,
+            extra: list[str] | None, weights_gib: float | None, cancel: Event, spark: bool) -> dict:
     _wait_vram_free(cancel)
+    if spark:
+        _preparing(cancel, "Downloading reasoning parser")
     flags = profiles.spark_flags(_spark_parser()) if spark else None
     if cancel.is_set():
         raise StartCancelled("Model start cancelled")
     image = profiles.SPARK_IMAGE if spark else IMAGE
     if spark:
+        _preparing(cancel, "Preparing engine image")
         _ensure_image(image)
     g = gpu_info()
     if util is None:

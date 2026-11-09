@@ -449,6 +449,7 @@ def runtime(api, monkeypatch):
     monkeypatch.setattr(runner, "gpu_info", lambda: GPU)
     monkeypatch.setattr(runner, "_ensure_network", lambda: None)
     monkeypatch.setattr(runner, "_start_cancel", None)
+    monkeypatch.setattr(runner, "_preparation", None)
     monkeypatch.setattr(runner.httpx, "get", lambda *a, **kw: SimpleNamespace(status_code=503))
     return containers
 
@@ -534,6 +535,47 @@ def test_spark_image_pull_failure_is_reported(api, spark):
     assert response.status_code == 500
     assert "Recipe image could not be pulled" in response.json()["detail"]
     assert not spark.runs
+    assert api.get("/api/system").json()["vllm"]["state"] == "stopped"
+
+
+@pytest.mark.parametrize("cancel", [True, False])
+def test_spark_image_preparation_stays_visible_and_cancellable(api, spark, monkeypatch, cancel):
+    preparing, release = Event(), Event()
+    def image(image):
+        preparing.set()
+        assert release.wait(5)
+    monkeypatch.setattr(runner, "_ensure_image", image)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(api.post, "/api/run", json={"repo_id": profiles.NEMOTRON_SUPER})
+        try:
+            assert preparing.wait(2)
+            for _ in range(2):
+                state = api.get("/api/system").json()["vllm"]
+                assert state["state"] == "created" and not state["ready"]
+                assert state["model"] == profiles.NEMOTRON_SUPER
+                assert state["context"] == 1000000
+                assert state["image"] == profiles.SPARK_IMAGE
+                assert state["startup"]["stage"] == "Preparing engine image"
+                assert state["startup"]["elapsed_seconds"] >= 0
+                assert state["startup"]["last_log_at"] is None
+            if cancel:
+                assert api.post("/api/stop").status_code == 200
+                assert api.get("/api/system").json()["vllm"]["state"] == "stopped"
+            release.set()
+            assert pending.result(timeout=2).status_code == (409 if cancel else 200)
+            assert runner._preparation is None
+            assert len(spark.runs) == (0 if cancel else 1)
+        finally:
+            release.set()
+
+
+def test_auxiliary_mtp_start_is_rejected_without_stopping_model(api, runtime):
+    assert api.post("/api/run", json={"repo_id": "org/model", "context": 8192}).status_code == 200
+    old = runtime.current
+    response = api.post("/api/run", json={"repo_id": profiles.SPARK_MTP})
+    assert response.status_code == 400
+    assert "auxiliary checkpoint" in response.json()["detail"]
+    assert runtime.current is old
 
 
 def test_spark_cancel_during_parser_preparation_prevents_image_pull(api, spark, monkeypatch):
@@ -564,6 +606,7 @@ def test_spark_parser_failure_is_reported(api, spark, monkeypatch):
     assert response.status_code == 500
     assert "Official parser unavailable" in response.json()["detail"]
     assert not spark.runs
+    assert runner._preparation is None
 
 
 def test_spark_library_exposes_recipe_defaults(api, spark, monkeypatch):

@@ -161,6 +161,10 @@ MTP uses `nvidia/Nemotron-3-Super-120B-A12B-BF16-MTPv2` with three draft tokens.
 The official reasoning plugin is revision-pinned and loaded from the shared HF
 cache. The first start may take longer while the engine image and MTP head download;
 download failures appear as startup errors.
+Engine preparation remains visible and cancellable before the container exists.
+Cancel prevents a late launch, although an in-flight Docker image pull may finish
+in the background. The auxiliary MTP checkpoint is hidden from the runnable
+Library and cannot be launched as a standalone model.
 
 Auto initially targets **1,000,000 tokens**, explicitly enabling NVIDIA's long-context
 extension beyond the config's 262,144 positions. Subsequent Auto runs use learned
