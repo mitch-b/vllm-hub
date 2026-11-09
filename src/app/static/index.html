@@ -625,6 +625,7 @@ function renderRuntime() {
     else if (p === 'loading') html = `<div class="rt-top"><div style="min-width:0">
         <div class="eyebrow"><span class="dot pulse" style="background:var(--warn)"></span>Starting · <span id="elapsed"></span></div>
         <h2 class="rt-title">${nameHtml(v.model)}</h2>
+        <div class="rt-sub" id="startupSettings"></div>
         <div class="rt-sub" id="startupStage"></div>
         <div class="rt-sub" id="startupActivity"></div></div>
         <div class="rt-actions">${feature('logs') ? toggles(['console', 'term', 'Console']) : ''}
@@ -655,13 +656,18 @@ function renderRuntime() {
   if (p === 'loading') {
     const startup = v.startup, drift = S.sysAt ? Math.max(0, (Date.now() - S.sysAt) / 1000) : 0;
     const elapsed = startup?.elapsed_seconds;
+    $('#startupSettings').textContent = nativeBackend() ? '' :
+      `${+v.context ? fmtCtx(+v.context) + ' context' : 'Choosing context'}${+v.util ? ' · ' + Math.round(+v.util * 100) + '% GPU memory budget' : ''}. Auto settings are estimates until the engine is ready.`;
+    $('#startupSettings').hidden = nativeBackend();
     $('#elapsed').textContent = elapsed == null ? 'Waiting for container' : fmtDur(Math.floor(elapsed + drift));
-    const stage = startup?.stage || 'Waiting for startup details';
-    const count = startup?.progress;
+    const stage = v.state === 'restarting' ? 'Startup failed; container is restarting' : startup?.stage || 'Waiting for startup details';
+    const count = v.state === 'restarting' ? null : startup?.progress;
     $('#startupStage').textContent = stage + (count ? ` · ${count.completed} / ${count.total} ${stage === 'Loading weights' ? 'shards' : 'graphs'}` : '');
     const quiet = startup?.last_log_at == null ? null
       : Math.max(0, Math.floor(startup.started_at + elapsed - startup.last_log_at + drift));
-    $('#startupActivity').textContent = startup?.message || startup?.error || (quiet == null
+    $('#startupActivity').style.color = startup?.error ? 'var(--bad)' : '';
+    $('#startupActivity').setAttribute('role', startup?.error ? 'alert' : 'status');
+    $('#startupActivity').textContent = startup?.error || startup?.message || (quiet == null
       ? 'Waiting for startup logs. Large models can take a few minutes; open Console for details.'
       : `Last log activity ${fmtDur(quiet)} ago. ` + (quiet >= 30
         ? 'No new logs; this alone does not mean it is stuck. Open Console for details.'
@@ -1037,6 +1043,9 @@ async function startModel({ id, context, graphs, util, w }) {
     renderAll();
     const r = await post('/api/run', { repo_id: id, context: context || null, graphs, util: util || null, weights_gib: w || null });
     if (seq !== runSeq) return;
+    S.sys.vllm = { ...V(), context: r.context, util: r.util };
+    renderAll();
+    toast('Startup requested — not ready yet', `${r.context ? (context ? '' : 'Auto selected ') + fmtCtx(r.context) + ' context. ' : ''}Follow startup progress below; large models can take several minutes.`, 'info', 8000);
     store.set('last', { id, context: r.context, graphs, util, w });
     refreshSystem(); loadLocal();
   } catch (e) { if (seq === runSeq) { toast('Could not start vLLM', e.message, 'bad', 8000); refreshSystem(); } }

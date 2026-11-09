@@ -74,7 +74,7 @@ def _crash_reason(c) -> str:
         logs = c.logs(tail=60).decode(errors="replace")
     except DockerException:
         return "vLLM keeps crashing; open Console for details."
-    logs = re.sub(r"\x1b\[[0-?]*[ -/]*[1697 1697~]", "", logs)
+    logs = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", logs)
     lines = [m.group(0).strip() for line in logs.splitlines() if (m := _ERROR_LINE.search(line))]
     reason = lines[-1][:300] if lines else "vLLM keeps crashing; open Console for details."
     if re.search(r"does not recognize this architecture|not supported|unsupported", logs, re.IGNORECASE):
@@ -175,6 +175,9 @@ def status() -> dict:
             pass
     return {
         "docker_ok": True, "state": state, "model": model, "ready": ready, "served": served,
+        "error": _crash_reason(c) if state in ("exited", "dead")
+        and (state == "dead" or c.attrs.get("State", {}).get("ExitCode", 0) != 0) else None,
+        "util": c.labels.get("vllm-hub.util"),
         "container_id": c.id,
         "port": HOST_PORT, "context": c.labels.get("vllm-hub.context"), "kv_tokens": kv,
         "url": f"http://localhost:{HOST_PORT}/v1",

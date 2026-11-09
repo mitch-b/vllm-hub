@@ -314,8 +314,20 @@ def test_system_startup_nonrunning_states_do_not_read_old_logs(api, starting, st
     else:
         assert s["elapsed_seconds"] is None and s["started_at"] is None
         assert s["stage"] == ("Container restarting" if state == "restarting" else "Waiting for container")
-    if state != "restarting":
+    if state not in ("restarting", "dead"):
         assert not calls
+
+
+def test_system_reports_resolved_budget_and_exit_error(api, starting):
+    c, _ = starting
+    c.labels["vllm-hub.util"] = "0.75"
+    c.status = "exited"
+    c.attrs["State"]["ExitCode"] = 1
+    c.logs = lambda **kw: b"\x1b[31mValueError: Not enough memory\x1b[0m\n"
+    v = api.get("/api/system").json()["vllm"]
+    assert v["util"] == "0.75"
+    assert v["error"] == "Error: Not enough memory"
+    assert "\x1b" not in v["error"]
 
 
 def test_system_restarting_reports_crash_reason(api, starting):

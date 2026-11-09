@@ -377,6 +377,7 @@ def starting(b):
     p = open_page(b, {"system": system})
     p.wait_for_selector("#startupStage")
     assert p.locator("#startupStage").inner_text() == "Loading weights · 3 / 8 shards"
+    assert "Auto settings are estimates" in p.locator("#startupSettings").inner_text()
     assert p.locator("#elapsed").inner_text().startswith("2m ")
     p.reload()
     p.wait_for_selector("#startupStage")
@@ -410,7 +411,7 @@ def warming(b):
     assert p.locator("#elapsed").inner_text() == "5s"
     p.evaluate("S.sys.vllm.state = 'restarting'; S.sys.vllm.startup = {stage: 'Container restarting'}; renderRuntime()")
     assert p.locator("#elapsed").inner_text() == "Waiting for container"
-    assert p.locator("#startupStage").inner_text() == "Container restarting"
+    assert p.locator("#startupStage").inner_text() == "Startup failed; container is restarting"
     p.evaluate("S.sys.vllm.ready = true; renderRuntime()")
     assert p.locator("#startupStage").count() == 0
     p.evaluate("S.sys.vllm.ready = false; S.sys.vllm.state = 'exited'; renderRuntime()")
@@ -743,11 +744,26 @@ def no_docker(b):
     return p
 
 
+def startup_failure(b):
+    p = starting(b)
+    p.evaluate("""() => {
+        S.sys.vllm.state = 'restarting';
+        S.sys.vllm.util = '0.75';
+        S.sys.vllm.startup.error = 'Unsupported model architecture. '
+            + 'Set VLLM_IMAGE to a newer image, then Stop and Run again.';
+        renderRuntime();
+    }""")
+    assert p.locator("#startupActivity").get_attribute("role") == "alert"
+    assert "Unsupported model architecture" in p.locator("#startupActivity").inner_text()
+    assert "75%" in p.locator("#startupSettings").inner_text()
+    return p
+
+
 SCENES = {
     f.__name__.replace("_dialog", ""): f
     for f in (overview, connect, playground, activity, run_dialog, discover, discover_sort, discover_mobile,
               downloading, downloading_run,
-              download_finalizing, download_completion, console, starting, warming, capturing,
+              download_finalizing, download_completion, console, starting, startup_failure, warming, capturing,
               cancelled_start, console_recovery, update, macos, macos_mobile, native_discover, macos_start_failed,
               macos_connection_lost, no_gpu, no_docker)
 }

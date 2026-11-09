@@ -269,6 +269,11 @@ shows the error and reconnects automatically without replaying queued starts.
 
 ## Notes
 
+Starting a model confirms only that startup was requested, not that inference is ready.
+The startup panel shows the resolved context and GPU memory budget; Auto values are
+estimates until the engine is ready. Large models can take several minutes to load.
+Startup failures remain visible even after the container exits; Console has the full logs.
+
 - **Security**: the hub mounts the Docker socket, which is root-equivalent on the host. It binds to `127.0.0.1` only; don't expose it.
 - **Windows VRAM**: WDDM evicts idle VRAM, so `nvidia-smi` can show little used while a model is loaded. The hub uses 0.90 GPU memory utilization by default; 0.93 was observed to hang on a 4090.
 - **DGX Spark (GB10)**: `nvidia-smi` reports no dedicated VRAM on this unified-memory GPU, so the hub treats system RAM (about 128 GB) as GPU memory and shows RAM in use (excluding reclaimable cache) as used. If vLLM fails to start on the default image, set `VLLM_IMAGE` to NVIDIA's Spark build, e.g. `nvcr.io/nvidia/vllm:26.02-py3` (the hub adds `vllm serve` for it; see https://build.nvidia.com/spark/vllm).
