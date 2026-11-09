@@ -314,7 +314,18 @@ def test_system_startup_nonrunning_states_do_not_read_old_logs(api, starting, st
     else:
         assert s["elapsed_seconds"] is None and s["started_at"] is None
         assert s["stage"] == ("Container restarting" if state == "restarting" else "Waiting for container")
-    assert not calls
+    if state != "restarting":
+        assert not calls
+
+
+def test_system_restarting_reports_crash_reason(api, starting):
+    c, _ = starting
+    c.status = "restarting"
+    c.logs = lambda **kw: (b"\x1b[0mpydantic_core.ValidationError: Value error, model type `x` but Transformers "
+                           b"does not recognize this architecture.\n")
+    s = api.get("/api/system").json()["vllm"]["startup"]
+    assert "does not recognize this architecture" in s["error"]
+    assert "VLLM_IMAGE" in s["error"]
 
 
 def test_system_ready_clears_startup_without_reading_logs(api, starting, monkeypatch):
