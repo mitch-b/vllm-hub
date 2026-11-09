@@ -341,7 +341,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
     <div class="brand"><span class="mark"><svg viewBox="0 0 24 24"><path d="M6 7l6 11 6-11" stroke="#fff" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>vLLM Hub</div>
     <div class="spacer"></div>
     <button class="ver" id="ver" data-act="update-open" hidden></button>
-    <div class="gpu" id="gpu" title="GPU memory in use"><span class="name">Detecting GPU…</span></div>
+    <div class="gpu" id="gpu" title="GPU memory in use" role="progressbar" aria-label="GPU memory usage" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-live="polite"><span class="name">Detecting GPU…</span></div>
   </div>
 </header>
 
