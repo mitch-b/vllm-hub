@@ -157,7 +157,7 @@ def cached_models() -> list[dict]:
         return []
     models = [
         {"id": r.repo_id, "size_gib": round(r.size_on_disk / 2**30, 1), "last_used": r.last_accessed}
-        for r in info.repos if r.repo_type == "model" and _has_weights(r)
+        for r in info.repos if r.repo_type == "model" and r.repo_id != profiles.SPARK_MTP and _has_weights(r)
     ]
     return sorted(models, key=lambda m: m["id"].lower())
 

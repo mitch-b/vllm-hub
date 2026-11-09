@@ -134,14 +134,52 @@ benchmark rankings are not currently integrated.
 
 Each result shows its repository's upload and last-update dates (not the original
 model's release date; updates may include README edits). Missing dates or model
-maximum-context metadata remain **unknown**. CUDA previews fetch only the small
-`config.json`, not weights, and show conservative context estimates at 90% GPU
+maximum-context metadata remain **unknown**. CUDA previews fetch small metadata
+files (`config.json` and, for packed NVFP4/MXFP4 checkpoints, the safetensors index),
+not weights, and show conservative context estimates at 90% GPU
 memory, or learned capacity when available, capped by the reported model maximum.
 Estimates require known weights and a compatible GPU fit; memory settings,
 concurrency and the engine affect actual capacity. Native previews show the
 reported GGUF context maximum and an Auto default of up to 8K, not a hardware-fit
 claim. Metadata is cached for ten minutes; read failures are logged and surfaced
 in model details without preventing catalog browsing.
+
+### Nemotron Super on a 128 GB DGX Spark / GB10
+
+On a single GB10 with at least 110 GiB of unified memory, selecting
+`nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4` automatically applies
+[NVIDIA's DGX Spark recipe](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4#vllm-on-dgx-spark).
+It also appears in Recommended on this hardware. No additional settings are needed:
+use **Download & run**, leaving context on **Auto**.
+
+This exact model/hardware combination pins `vllm/vllm-openai:v0.27.1` instead of
+the global `VLLM_IMAGE`, sets NVIDIA's Marlin/FlashInfer environment and backends,
+FP8 KV cache, FP16 Mamba state, async scheduling, chunked prefill, four sequences,
+and the official `super_v3` reasoning and `qwen3_coder` tool parsers. CUDA graphs
+default on for this profile (the Advanced switch can still disable them).
+MTP uses `nvidia/Nemotron-3-Super-120B-A12B-BF16-MTPv2` with three draft tokens.
+The official reasoning plugin is revision-pinned and loaded from the shared HF
+cache. The first start may take longer while the engine image and MTP head download;
+download failures appear as startup errors.
+Engine preparation remains visible and cancellable before the container exists.
+Cancel prevents a late launch, although an in-flight Docker image pull may finish
+in the background. The auxiliary MTP checkpoint is hidden from the runnable
+Library and cannot be launched as a standalone model.
+
+Auto initially targets **1,000,000 tokens**, explicitly enabling NVIDIA's long-context
+extension beyond the config's 262,144 positions. Subsequent Auto runs use learned
+KV capacity with the usual 3% margin, capped at 1M. The Run dialog also offers
+256K, 512K and 1M choices. This is a recipe target, not a measured fit or speed
+guarantee: leave memory for Linux and other applications, unload other models,
+and confirm the engine's capacity and a full-length request before relying on 1M.
+Long prompt prefill can be slow even when the cache fits.
+
+Packed checkpoints are sized from their safetensors index's stored tensor bytes,
+not expanded logical parameter counts. This model is about 74.8 GiB of weights,
+not the previously estimated 120.7 GB; runtime allocations, MTP, recurrent state
+and KV cache are additional. Missing packed-size metadata is reported as unknown
+rather than an incorrect fit verdict. Other GPUs, models and native engines keep
+their existing defaults. Context always includes both prompt and generated tokens.
 
 If a runtime is missing, the hub explains the one-time setup and reconnects
 when it becomes available. It never changes a running model for an unsupported

@@ -1,0 +1,30 @@
+{
+  "gpu": {
+    "name": "NVIDIA GB10",
+    "total_mib": 124000,
+    "used_mib": 8000,
+    "driver": "580.178.04",
+    "gpu_count": 1,
+    "unified_memory": true
+  },
+  "model": {
+    "id": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
+    "downloads": 445100,
+    "likes": 456,
+    "gated": false,
+    "quant": "NVFP4",
+    "weights_gib": 74.8,
+    "verdict": "fits",
+    "headroom_gib": 42.9,
+    "reason": "Fits with room for a long context.",
+    "max_context": 1000000,
+    "context_hint": 1000000,
+    "context_learned": false,
+    "launch_profile": {
+      "name": "NVIDIA DGX Spark recipe",
+      "max_context": 1000000,
+      "default_context": 1000000,
+      "graphs": true
+    }
+  }
+}

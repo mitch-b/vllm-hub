@@ -119,6 +119,88 @@ def run_dialog(b):
     return p
 
 
+def spark_discover(b):
+    data = fixture("spark")
+    system = fixture("system")
+    system.update(gpu=data["gpu"], recommended_util=0.9,
+                  vllm={"docker_ok": True, "state": "stopped", "model": None, "ready": False})
+    p = open_page(b, {"system": system, "models": [], "recommended": [data["model"]],
+                      "search": [data["model"]], "jobs": []})
+    p.click("#tab-discover")
+    p.wait_for_selector('[data-act="run"]:visible')
+    text = p.locator("#discover").inner_text()
+    assert "74.8 GB" in text and "Won't fit" not in text
+    assert "Recipe target 1M" in text and "Model maximum 1M" in text
+    return p
+
+
+def spark_run_dialog(b):
+    p = spark_discover(b)
+    model_id = fixture("spark")["model"]["id"]
+    p.locator('[data-act="run"]:visible').click()
+    p.wait_for_selector("dialog[open]")
+    assert p.locator('#ctxSeg button[data-v="1000000"]').inner_text() == "1M"
+    assert p.locator('#ctxSeg button[data-v="0"]').get_attribute("aria-checked") == "true"
+    assert p.locator("#graphs").is_checked()
+    assert "NVIDIA DGX Spark recipe applied automatically" in p.locator("#runNote").inner_text()
+    assert p.locator("#util").input_value() == "0.9"
+    p.locator('#ctxSeg button[data-v="1000000"]').click()
+    requests = []
+    def run(route):
+        requests.append(route.request.post_data_json)
+        route.fulfill(content_type="application/json", body='{"id":"spark-job","status":"queued"}')
+    p.route(f"{BASE}/api/pull", run)
+    p.click("#runGo")
+    p.wait_for_function("() => S.runAfter['spark-job']")
+    assert requests[0]["repo_id"] == model_id
+    assert p.evaluate("S.runAfter['spark-job'].context") == 1000000
+    assert p.evaluate("S.runAfter['spark-job'].graphs") is True
+    assert p.evaluate("id => store.get('ctx.' + id, null)", model_id) is None
+    # Verify the same simple dialog is available from the downloaded Library entry.
+    p.evaluate("""m => {
+        S.local = [{...m, size_gib: 74.8, last_used: 0}];
+        openRunDialog(m.id, 74.8);
+    }""", fixture("spark")["model"])
+    p.wait_for_selector("dialog[open]")
+    assert p.locator('#ctxSeg button[data-v="1000000"]').count() == 1
+    assert p.locator("#graphs").is_checked()
+    p.evaluate("S.sys.vllm.context = 1000000")
+    assert p.evaluate("tokenLimits()") == {"ctx": 1000000, "out": 32768, "prompt": 967232}
+    return p
+
+
+def spark_mobile(b):
+    p = spark_run_dialog(b)
+    p.set_viewport_size({"width": 390, "height": 844})
+    assert p.locator('#ctxSeg button[data-v="1000000"]').is_visible()
+    assert p.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    return p
+
+
+def spark_preparing(b):
+    data = fixture("spark")
+    system = fixture("system")
+    system.update(gpu=data["gpu"], recommended_util=0.9, image="vllm/vllm-openai:v0.27.1")
+    system["vllm"] = {
+        "docker_ok": True, "state": "created", "ready": False,
+        "model": data["model"]["id"], "context": 1000000, "util": 0.9,
+        "startup": {
+            "container_id": None, "started_at": CAPTURED - 60, "elapsed_seconds": 60,
+            "stage": "Preparing engine image", "progress": None, "last_log_at": None, "error": None,
+            "message": "Preparing the engine before container startup. Downloads may take several minutes.",
+        },
+    }
+    p = open_page(b, {"system": system, "models": [], "recommended": [data["model"]], "jobs": []})
+    p.wait_for_selector("#startupStage")
+    assert p.locator("#startupStage").inner_text() == "Preparing engine image"
+    assert p.locator('[data-act="stop"]:visible').inner_text() == "Cancel"
+    p.reload()
+    p.wait_for_selector("#startupStage")
+    assert p.locator("#startupStage").inner_text() == "Preparing engine image"
+    assert p.locator('[data-act="stop"]:visible').is_visible()
+    return p
+
+
 def discover(b):
     p = open_page(b)
     p.click("#tab-discover")
@@ -761,7 +843,9 @@ def startup_failure(b):
 
 SCENES = {
     f.__name__.replace("_dialog", ""): f
-    for f in (overview, connect, playground, activity, run_dialog, discover, discover_sort, discover_mobile,
+    for f in (overview, connect, playground, activity, run_dialog, spark_discover, spark_run_dialog, spark_mobile,
+              spark_preparing,
+              discover, discover_sort, discover_mobile,
               downloading, downloading_run,
               download_finalizing, download_completion, console, starting, startup_failure, warming, capturing,
               cancelled_start, console_recovery, update, macos, macos_mobile, native_discover, macos_start_failed,

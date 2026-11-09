@@ -5,12 +5,15 @@ import os
 import re
 import time
 from datetime import datetime
+from pathlib import Path
 from threading import Event, RLock
 
 import docker
 import httpx
-from docker.errors import DockerException, NotFound
+from docker.errors import DockerException, ImageNotFound, NotFound
 from docker.types import DeviceRequest
+from huggingface_hub import hf_hub_download
+from huggingface_hub.constants import HF_HOME
 
 from . import capacity, profiles
 from .gpu import gpu_info, reset_probe
@@ -26,6 +29,7 @@ BASE_URL = os.getenv("VLLM_BASE_URL", f"http://{CONTAINER}:8000")
 _client: docker.DockerClient | None = None
 _lifecycle_lock = RLock()
 _start_cancel: Event | None = None
+_preparation: dict | None = None
 
 
 class StartCancelled(RuntimeError):
@@ -155,6 +159,20 @@ def status() -> dict:
         c = _container()
     except Exception as exc:
         return {"docker_ok": False, "error": str(exc), "state": "unknown"}
+    with _lifecycle_lock:
+        if _preparation is not None:
+            preparation = dict(_preparation)
+            started = preparation.pop("started_at")
+            stage = preparation.pop("stage")
+            return {
+                "docker_ok": True, "state": "created", "ready": False, **preparation,
+                "startup": {
+                    "container_id": None, "started_at": started,
+                    "elapsed_seconds": max(0, time.time() - started), "stage": stage,
+                    "progress": None, "last_log_at": None, "error": None,
+                    "message": "Preparing the engine before container startup. Downloads may take several minutes.",
+                },
+            }
     if c is None:
         return {"docker_ok": True, "state": "stopped", "model": None, "ready": False}
     state = c.status
@@ -178,6 +196,7 @@ def status() -> dict:
         "error": _crash_reason(c) if state in ("exited", "dead")
         and (state == "dead" or c.attrs.get("State", {}).get("ExitCode", 0) != 0) else None,
         "util": c.labels.get("vllm-hub.util"),
+        "image": c.attrs.get("Config", {}).get("Image"),
         "container_id": c.id,
         "port": HOST_PORT, "context": c.labels.get("vllm-hub.context"), "kv_tokens": kv,
         "url": f"http://localhost:{HOST_PORT}/v1",
@@ -186,9 +205,11 @@ def status() -> dict:
 
 
 def stop() -> None:
+    global _preparation
     with _lifecycle_lock:
         if _start_cancel is not None:
             _start_cancel.set()
+        _preparation = None
         c = _container()
         if c is not None:
             c.remove(force=True)
@@ -207,24 +228,81 @@ def _wait_vram_free(cancel: Event, timeout: float = 20) -> None:
             raise StartCancelled("Model start cancelled")
 
 
+def _spark_parser() -> str:
+    # Keep the official plugin in the shared HF cache; no additional host bind mount is needed.
+    path = hf_hub_download(profiles.NEMOTRON_SUPER, "super_v3_reasoning_parser.py",
+                           revision="ff433f5493e25d631c9f12b5d55c674229923d02")
+    relative = Path(path).relative_to(Path(HF_HOME))
+    return str(Path("/root/.cache/huggingface") / relative)
+
+
+def _ensure_image(image: str) -> None:
+    try:
+        client().images.get(image)
+    except ImageNotFound:
+        client().images.pull(image)
+
+
+def _preparing(cancel: Event, stage: str) -> None:
+    with _lifecycle_lock:
+        if cancel.is_set():
+            raise StartCancelled("Model start cancelled")
+        if _preparation is not None:
+            _preparation["stage"] = stage
+
+
 def start(model_id: str, context: int | None = None, util: float | None = None,
-          graphs: bool = False, extra: list[str] | None = None, weights_gib: float | None = None) -> dict:
-    global _start_cancel
-    if gpu_info() is None:
+          graphs: bool | None = None, extra: list[str] | None = None, weights_gib: float | None = None) -> dict:
+    global _start_cancel, _preparation
+    initial_gpu = gpu_info()
+    if initial_gpu is None:
         raise GPUUnavailable("CUDA vLLM requires an NVIDIA GPU. Enable Docker Model Runner for Metal or CPU inference.")
+    if model_id == profiles.SPARK_MTP:
+        raise ValueError("This MTP head is an auxiliary checkpoint, not a standalone language model.")
+    spark = profiles.spark_recipe(model_id, initial_gpu)
+    if spark and context is not None and not 2048 <= context <= profiles.SPARK_CONTEXT:
+        raise ValueError("NVIDIA DGX Spark recipe context must be between 2048 and 1000000 tokens.")
     with _lifecycle_lock:
         stop()
         cancel = _start_cancel = Event()
+        if spark:
+            _preparation = {
+                "model": model_id, "context": context or profiles.SPARK_CONTEXT,
+                "util": util if util is not None else 0.90, "image": profiles.SPARK_IMAGE,
+                "started_at": time.time(), "stage": "Waiting for GPU memory",
+            }
+    try:
+        return _launch(model_id, context, util, graphs, extra, weights_gib, cancel, spark)
+    finally:
+        with _lifecycle_lock:
+            if _start_cancel is cancel:
+                _preparation = None
+
+
+def _launch(model_id: str, context: int | None, util: float | None, graphs: bool | None,
+            extra: list[str] | None, weights_gib: float | None, cancel: Event, spark: bool) -> dict:
     _wait_vram_free(cancel)
+    if spark:
+        _preparing(cancel, "Downloading reasoning parser")
+    flags = profiles.spark_flags(_spark_parser()) if spark else None
+    if cancel.is_set():
+        raise StartCancelled("Model start cancelled")
+    image = profiles.SPARK_IMAGE if spark else IMAGE
+    if spark:
+        _preparing(cancel, "Preparing engine image")
+        _ensure_image(image)
     g = gpu_info()
     if util is None:
-        util = profiles.choose_util(g["total_mib"], g["used_mib"]) if g else 0.85
+        util = 0.90 if spark else profiles.choose_util(g["total_mib"], g["used_mib"]) if g else 0.85
     if not context:
         total_gib = (g["total_mib"] / 1024) if g else 24
-        context = capacity.auto_context(model_id, util) or profiles.choose_context(weights_gib, total_gib, util)
-    args = profiles.build_vllm_args(model_id, context, util, graphs=graphs, extra=extra)
+        context = (capacity.auto_context(model_id, util, profiles.SPARK_CONTEXT) or profiles.SPARK_CONTEXT
+                   ) if spark else (capacity.auto_context(model_id, util)
+                                    or profiles.choose_context(weights_gib, total_gib, util))
+    args = profiles.build_vllm_args(model_id, context, util, graphs=spark if graphs is None else graphs,
+                                   max_seqs=4 if spark else 2, extra=extra, flags=flags)
 
-    env = {}
+    env = dict(profiles.SPARK_ENV) if spark else {}
     if os.getenv("HF_TOKEN"):
         env["HF_TOKEN"] = os.environ["HF_TOKEN"]
     with _lifecycle_lock:
@@ -232,7 +310,7 @@ def start(model_id: str, context: int | None = None, util: float | None = None,
             raise StartCancelled("Model start cancelled")
         _ensure_network()
         client().containers.run(
-            IMAGE, _command(args), name=CONTAINER, detach=True, ipc_mode="host",
+            image, _command(args, image), name=CONTAINER, detach=True, ipc_mode="host",
             restart_policy={"Name": "unless-stopped"},  # comes back with Docker after a reboot
             device_requests=[DeviceRequest(count=-1, capabilities=[["gpu"]])],
             ports={"8000/tcp": HOST_PORT}, network=NETWORK, environment=env,
@@ -240,12 +318,12 @@ def start(model_id: str, context: int | None = None, util: float | None = None,
             labels={"vllm-hub.model": model_id, "vllm-hub.context": str(context), "vllm-hub.util": f"{util:.2f}",
                     "vllm-hub.managed": "true"},
         )
-    return {"model": model_id, "context": context, "util": util, "args": args}
+    return {"model": model_id, "context": context, "util": util, "args": args, "image": image}
 
 
-def _command(args: list[str]) -> list[str]:
+def _command(args: list[str], image: str | None = None) -> list[str]:
     # NVIDIA's NGC vLLM image (DGX Spark) has a generic entrypoint, so it needs the explicit `vllm serve`.
-    if "nvidia/vllm" in IMAGE and args[:1] == ["--model"]:
+    if "nvidia/vllm" in (image or IMAGE) and args[:1] == ["--model"]:
         return ["vllm", "serve", args[1], *args[2:]]
     return args
 

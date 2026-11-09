@@ -34,6 +34,7 @@ SORTS = {"popular": "downloads", "recent": "createdAt", "updated": "lastModified
 _EXPAND = ["downloads", "likes", "tags", "safetensors", "gated", "pipeline_tag", "createdAt", "lastModified"]
 _cache: dict[str, tuple[float, ModelInfo]] = {}
 _context_cache: dict[str, tuple[float, dict]] = {}
+_weight_cache: dict[str, tuple[float, float | None]] = {}
 CACHE_TTL = 600
 logger = logging.getLogger(__name__)
 
@@ -74,9 +75,16 @@ def _context_metadata(model_id: str) -> dict:
 
 def context_preview(model_id: str, w: float | None, total: float | None, verdict: str) -> dict:
     metadata = _context_metadata(model_id)
+    profile = profiles.launch_profile(model_id, gpu_info()) if model_id == profiles.NEMOTRON_SUPER else None
+    if profile:
+        metadata = {**metadata, "max_context": profile["max_context"], "context_error": None,
+                    "launch_profile": profile}
     maximum = metadata["max_context"]
-    learned = capacity.auto_context(model_id, 0.90) if total and verdict in ("fits", "tight") else None
-    estimate = profiles.choose_context(w, total, 0.90) if total and w and verdict in ("fits", "tight") else None
+    usable = total and verdict in ("fits", "tight")
+    learned = (capacity.auto_context(model_id, 0.90, maximum) if profile
+               else capacity.auto_context(model_id, 0.90)) if usable else None
+    estimate = (profile["default_context"] if profile else profiles.choose_context(w, total, 0.90)
+                ) if usable and w else None
     hint = learned or estimate
     if hint and maximum:
         hint = min(hint, maximum)
@@ -96,18 +104,39 @@ def _total_gib() -> float | None:
     return gpu["total_mib"] / 1024 if gpu else None
 
 
+def _packed_weights_gib(model_id: str) -> float | None:
+    """Packed dtype parameter counts can be logical values, not stored bytes."""
+    hit = _weight_cache.get(model_id)
+    if hit and time.time() - hit[0] < CACHE_TTL:
+        return hit[1]
+    try:
+        path = hf_hub_download(model_id, "model.safetensors.index.json")
+        size = json.loads(Path(path).read_text())["metadata"]["total_size"]
+        if not isinstance(size, (int, float)) or isinstance(size, bool) or size <= 0:
+            raise ValueError("Invalid checkpoint tensor size")
+        weight = size / profiles.GIB
+    except (HfHubHTTPError, httpx.HTTPError, OSError, ValueError, KeyError, TypeError) as exc:
+        logger.warning("Could not read packed checkpoint size for %s: %s", model_id, exc)
+        weight = None
+    _weight_cache[model_id] = (time.time(), weight)
+    return weight
+
+
 def _summarize(info, total_gib: float | None) -> dict:
     tags = list(info.tags or [])
     st = getattr(info, "safetensors", None)
     params = getattr(st, "parameters", None) if st else None
-    w = profiles.weights_gib(params)
+    quant = profiles.quant_label(tags, info.id)
+    packed = quant in ("NVFP4", "MXFP4") or "gpt-oss" in info.id.lower()
+    w = _packed_weights_gib(info.id) if packed else profiles.weights_gib(params)
     fit = profiles.fit_verdict(w, total_gib, tags)
     return {
         "id": info.id,
         "downloads": getattr(info, "downloads", None),
         "likes": getattr(info, "likes", None),
         "gated": bool(getattr(info, "gated", False)),
-        "quant": profiles.quant_label(tags, info.id),
+        "quant": quant,
+        "size_error": "Could not read packed checkpoint size." if packed and w is None else None,
         "weights_gib": round(w, 1) if w else None,
         **fit,
         **dates(info),
@@ -143,8 +172,11 @@ _RANK = {"fits": 0, "tight": 1, "unknown": 2, "too_big": 3, "unsupported": 4}
 
 def recommended() -> list[dict]:
     total = _total_gib()
+    picks = list(RECOMMENDED)
+    if profiles.spark_recipe(profiles.NEMOTRON_SUPER, gpu_info()):
+        picks.insert(0, profiles.NEMOTRON_SUPER)
     with ThreadPoolExecutor(max_workers=8) as pool:
-        rows = [r for r in pool.map(lambda m: _one(m, total), RECOMMENDED) if r]
+        rows = [r for r in pool.map(lambda m: _one(m, total), picks) if r]
     # Best usable first; weight size is a fit heuristic, not an intelligence score.
     rows.sort(key=lambda r: (_RANK[r["verdict"]], -(r["weights_gib"] or 0)))
     return rows

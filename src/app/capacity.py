@@ -72,6 +72,6 @@ def fit_context(tokens: int, model_max: int | None) -> int:
     return max(ctx, 2048)
 
 
-def auto_context(model_id: str, util: float) -> int | None:
+def auto_context(model_id: str, util: float, maximum: int | None = None) -> int | None:
     tokens = kv_tokens(model_id, util)
-    return fit_context(tokens, model_max_len(model_id)) if tokens else None
+    return fit_context(tokens, maximum if maximum is not None else model_max_len(model_id)) if tokens else None

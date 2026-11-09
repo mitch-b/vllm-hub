@@ -12,6 +12,8 @@ from app import capacity, hf, profiles
 def catalog(monkeypatch, tmp_path):
     monkeypatch.setattr(hf, "_context_cache", {})
     monkeypatch.setattr(hf, "_cache", {})
+    monkeypatch.setattr(hf, "_weight_cache", {})
+    monkeypatch.setattr(hf, "gpu_info", lambda: None)
     monkeypatch.setattr(hf, "_total_gib", lambda: 24)
     monkeypatch.setattr(capacity, "auto_context", lambda *args: None)
     config = tmp_path / "config.json"
@@ -21,6 +23,71 @@ def catalog(monkeypatch, tmp_path):
                      safetensors={"parameters": {"F16": 3 * 2**30}, "total": 3 * 2**30},
                      createdAt="2026-10-01T00:00:00Z", lastModified="2026-10-30T00:00:00Z")
     return info, config
+
+
+def test_packed_checkpoint_uses_stored_tensor_bytes(catalog, monkeypatch):
+    info, config = catalog
+    info.id = profiles.NEMOTRON_SUPER
+    info.tags = ["nvfp4"]
+    info.safetensors = SimpleNamespace(parameters={
+        "U8": 112764911616, "BF16": 6020553728, "F8_E4M3": 4825546752, "F32": 20992,
+    })
+    index = config.with_name("model.safetensors.index.json")
+    index.write_text(json.dumps({"metadata": {"total_size": 80297329824}}))
+    calls = []
+
+    def download(model_id, filename):
+        calls.append(filename)
+        return str(index if filename.endswith("index.json") else config)
+
+    monkeypatch.setattr(hf, "hf_hub_download", download)
+    for _ in range(2):
+        row = hf._summarize(info, 121)
+        assert row["weights_gib"] == 74.8
+        assert row["verdict"] == "fits"
+        assert row["size_error"] is None
+    assert calls.count("model.safetensors.index.json") == 1
+    assert profiles.weights_gib(info.safetensors.parameters) > 120
+
+
+@pytest.mark.parametrize("metadata", [{}, {"total_size": 0}, {"total_size": True},
+                                      {"total_size": "unknown"}])
+def test_packed_size_failure_is_unknown_not_inflated(catalog, metadata, caplog):
+    info, config = catalog
+    info.tags = ["nvfp4"]
+    config.write_text(json.dumps({"metadata": metadata}))
+    row = hf._summarize(info, 121)
+    assert row["weights_gib"] is None
+    assert row["verdict"] == "unknown"
+    assert row["size_error"] == "Could not read packed checkpoint size."
+    assert "Could not read packed checkpoint size" in caplog.text
+
+
+def test_spark_context_preview_uses_recipe_limit(catalog, monkeypatch):
+    monkeypatch.setattr(hf, "gpu_info", lambda: {
+        "name": "NVIDIA GB10", "unified_memory": True, "gpu_count": 1, "total_mib": 124000,
+    })
+    row = hf.context_preview(profiles.NEMOTRON_SUPER, 74.8, 121, "fits")
+    assert row["max_context"] == row["context_hint"] == 1_000_000
+    assert row["launch_profile"]["graphs"] is True
+    assert not row["context_learned"]
+    calls = []
+    monkeypatch.setattr(capacity, "auto_context", lambda *args: calls.append(args) or 524288)
+    row = hf.context_preview(profiles.NEMOTRON_SUPER, 74.8, 121, "fits")
+    assert row["context_hint"] == 524288 and row["context_learned"]
+    assert calls == [(profiles.NEMOTRON_SUPER, 0.9, 1_000_000)]
+
+
+def test_spark_recommended_only_on_supported_hardware(catalog, monkeypatch):
+    calls = []
+    monkeypatch.setattr(hf, "_one", lambda model, total: calls.append(model))
+    hf.recommended()
+    assert profiles.NEMOTRON_SUPER not in calls
+    monkeypatch.setattr(hf, "gpu_info", lambda: {
+        "name": "NVIDIA GB10", "unified_memory": True, "gpu_count": 1, "total_mib": 124000,
+    })
+    hf.recommended()
+    assert profiles.NEMOTRON_SUPER in calls
 
 
 @pytest.mark.parametrize("sort,upstream", [

@@ -472,7 +472,7 @@ const post = (url, body) => api(url, { method: 'POST', headers: { 'Content-Type'
 
 const GiB = 2 ** 30;
 const fmtGB = b => b >= GiB ? (b / GiB).toFixed(1) + ' GB' : (b / 2 ** 20).toFixed(0) + ' MB';
-const fmtCtx = n => !n ? 'auto' : n >= 1024 ? Math.round(n / 1024) + 'K' : String(n);
+const fmtCtx = n => !n ? 'auto' : n === 1000000 ? '1M' : n >= 1024 ? Math.round(n / 1024) + 'K' : String(n);
 const fmtNum = n => new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(n);
 const fmtDate = s => { const d = new Date(s); return s && Number.isFinite(d.getTime()) ? d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : 'unknown'; };
 const fmtEta = s => s == null ? '' : s >= 3600 ? `${Math.floor(s / 3600)}h ${Math.round(s % 3600 / 60)}m` : s >= 60 ? `${Math.round(s / 60)} min` : `${Math.max(1, Math.round(s))}s`;
@@ -834,7 +834,7 @@ function discoverRow(m, disabled) {
   const meta = [size ? `${size} ${nativeBackend() ? 'GiB weights' : 'GB'}` : '', m.quant, m.source_label ? `${m.source_label} · ${m.publisher}` : '', m.downloads != null ? `${fmtNum(m.downloads)} downloads` : '']
     .filter(Boolean).map(x => `<span>${esc(x)}</span>`).join('<span class="sep"></span>');
   const hint = nativeBackend() ? m.context_hint ? `Auto default ${fmtCtx(m.context_hint)}` : ''
-    : hasFit() && m.context_hint ? `${m.context_learned ? 'Measured' : 'Estimated'} context ${fmtCtx(m.context_hint)}` : '';
+    : hasFit() && m.context_hint ? `${m.context_learned ? 'Measured context' : m.launch_profile ? 'Recipe target' : 'Estimated context'} ${fmtCtx(m.context_hint)}` : '';
   const context = [hint, `Model maximum ${m.max_context ? fmtCtx(m.max_context) : 'unknown'}`].filter(Boolean).join(' · ');
   let actions;
   if (local) actions = `<span class="badge">In library</span><button class="btn sm" data-act="run" data-id="${esc(m.id)}" data-w="${size ?? ''}" ${inferenceAttrs()}>${icon('play')}Run</button>`;
@@ -860,6 +860,7 @@ function discoverRow(m, disabled) {
       <div><dt>Likes</dt><dd>${m.likes != null ? fmtNum(m.likes) : '—'}</dd></div></dl>
       <div>${esc(nativeBackend() ? 'Auto is a conservative default, not a host-memory fit estimate.' : 'Context preview uses 90% GPU memory and default settings. Actual capacity depends on memory settings, concurrency and the engine.')}</div>
       ${m.context_error ? `<div>${esc(m.context_error)}</div>` : ''}
+      ${m.size_error ? `<div>${esc(m.size_error)}</div>` : ''}
       <div>Uploaded and updated dates describe this repository, not the original model release. Updates may include documentation changes.</div>
       <div><a class="btn ghost sm" style="padding-left:0" href="${esc(modelUrl(m.id))}" target="_blank" rel="noopener">${icon('ext')}${m.id.startsWith('ai/') ? 'View on Docker Hub' : 'View on Hugging Face'}</a></div></div>` : ''}
   </div>`;
@@ -1057,23 +1058,27 @@ function openRunDialog(id, w) {
   const d = $('#runDlg'), v = V(), local = isLocal(id);
   const saved = store.get('ctx.' + id, null), opts = store.get('opts.' + id, {});
   const lm = { ...[...(S.results || []), ...(S.rec || [])].find(m => m.id === id), ...S.local.find(m => m.id === id) };
+  const recipe = !nativeBackend() && lm?.launch_profile;
   let ctx = lm?.context_learned && saved && saved < lm.context_hint ? 0 : saved ?? (nativeBackend() || lm?.context_hint >= 16384 ? 0 : 32768);
-  const autoUtil = S.sys?.recommended_util ?? 0.9;
+  const autoUtil = recipe ? 0.9 : S.sys?.recommended_util ?? 0.9;
   $('#runName').innerHTML = `<span class="mono">${esc(id)}</span>`;
-  $('#ctxHint').textContent = lm?.context_hint ? nativeBackend() ? `default ${fmtCtx(lm.context_hint)}` : `auto ${lm.context_learned ? '=' : '≈'} ${fmtCtx(lm.context_hint)}${lm.context_learned ? ' (measured)' : ''}` : '';
+  $('#ctxHint').textContent = lm?.context_hint ? nativeBackend() ? `default ${fmtCtx(lm.context_hint)}` : `auto ${lm.context_learned ? '=' : recipe ? 'target' : '≈'} ${fmtCtx(lm.context_hint)}${lm.context_learned ? ' (measured)' : ''}` : '';
   const seg = $('#ctxSeg');
-  const contexts = (nativeBackend() ? [0, 4096, 8192, 16384, 32768] : CTX_OPTS).filter(n => lm?.max_context == null || n <= lm.max_context);
+  const contexts = (nativeBackend() ? [0, 4096, 8192, 16384, 32768]
+    : recipe ? [...CTX_OPTS, 262144, 524288, recipe.max_context] : CTX_OPTS)
+    .filter(n => lm?.max_context == null || n <= lm.max_context);
   if (!contexts.includes(ctx)) ctx = 0;
   const drawSeg = () => seg.innerHTML = contexts.map(n => `<button type="button" role="radio" aria-checked="${n === ctx}" data-v="${n}">${n ? fmtCtx(n) : 'Auto'}</button>`).join('');
   drawSeg();
   seg.onclick = e => { const b = e.target.closest('button'); if (b) { ctx = +b.dataset.v; drawSeg(); } };
-  $('#graphs').checked = !!opts.graphs;
+  $('#graphs').checked = opts.graphs ?? !!recipe?.graphs;
   const util = $('#util'); util.value = opts.util || autoUtil;
   const utilLabel = () => $('#utilVal').textContent = `${Math.round(util.value * 100)}%` + (+util.value === autoUtil ? ' (auto)' : '');
   util.oninput = utilLabel; utilLabel();
   d.querySelector('details').open = !!(opts.graphs || (opts.util && opts.util !== autoUtil));
   d.querySelector('details').hidden = !feature('cuda_options');
   const notes = [];
+  if (recipe) notes.push(`<div class="note info">${icon('info')}<div>${esc(recipe.name)} applied automatically, including MTP acceleration. Auto targets up to 1M; actual capacity depends on free memory. First start also downloads the engine and MTP head.</div></div>`);
   if (!local) notes.push(`<div class="note info">${icon('down')}<div>Not downloaded yet${w ? ` (${w} GB)` : ''}. It will download first, then start.</div></div>`);
   if (v.model && v.model !== id && (phase() === 'ready' || phase() === 'loading')) notes.push(`<div class="note">${icon('alert')}<div>This stops <b>${esc(split(v.model)[1])}</b>, which is running now.</div></div>`);
   $('#runNote').innerHTML = notes.join('');

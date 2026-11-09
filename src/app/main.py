@@ -33,7 +33,7 @@ class RunRequest(BaseModel):
     repo_id: str
     context: int | None = None
     util: float | None = Field(default=None, gt=0.1, le=0.95)
-    graphs: bool = False
+    graphs: bool | None = None
     extra: list[str] = []
     weights_gib: float | None = None
 
@@ -64,7 +64,7 @@ def system():
         "recommended_util": profiles.choose_util(gpu["total_mib"], gpu["used_mib"]) if gpu else None,
         "vllm": runtime,
         "hosting": host,
-        "image": runner.IMAGE,
+        "image": runtime.get("image") or runner.IMAGE,
     }
 
 
@@ -101,9 +101,14 @@ def models():
     total = gpu["total_mib"] / 1024 if gpu else None
     out = []
     for m in downloads.cached_models():
-        learned = capacity.auto_context(m["id"], 0.90)
+        profile = profiles.launch_profile(m["id"], gpu)
+        learned = (capacity.auto_context(m["id"], 0.90, profile["max_context"]) if profile
+                   else capacity.auto_context(m["id"], 0.90))
         m["context_hint"] = learned or (profiles.choose_context(m["size_gib"], total, 0.85) if total else 8192)
         m["context_learned"] = bool(learned)
+        if profile:
+            m.update(launch_profile=profile, max_context=profile["max_context"],
+                     context_hint=learned or profile["default_context"])
         out.append(m)
     return out
 
