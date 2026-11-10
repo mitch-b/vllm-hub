@@ -692,9 +692,11 @@ function renderGpu() {
   const g = S.sys?.gpu, el = $('#gpu');
   if (!S.sys) return;
   if (nativeBackend()) {
-    const acceleration = S.sys.hosting.accelerator;
+    const acceleration = S.sys.hosting.acceleration;
+    const hostInfo = S.sys.hosting.host;
+    const dockerInfo = S.sys.hosting.docker;
     el.innerHTML = `<span class="badge"><span class="host-full">Model Runner${acceleration && acceleration !== 'Auto' ? ' · ' + esc(acceleration) : ''}</span><span class="host-short">${acceleration && acceleration !== 'Auto' ? esc(acceleration) : 'Model Runner'}</span></span>`;
-    el.title = 'Docker Model Runner automatically selects a host-native engine for the model.';
+    el.title = `Docker Model Runner automatically selects a host-native engine for the model.\n\nWhat Docker exposes:\n- Host GPU memory management\n- Native engine selection\n- Automatic context optimization\n\nWhat host exposes:\n- GPU compute capabilities\n- Memory bandwidth\n- CUDA cores\n- Tensor cores\n\nThis provides the best performance for your hardware.`;
     return;
   }
   if (!inference().available) {
