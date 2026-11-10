@@ -320,6 +320,12 @@ table.mini .mono { font-size: 12px; }
 .item:hover .model-facts { color: var(--text); }
 .item:hover .title { color: var(--text); }
 .item:hover .title .org { color: var(--muted); }
+.item:hover .actions .btn { transform: scale(1.05); box-shadow: 0 2px 8px rgba(139,124,255,.3); }
+.item:hover .actions .btn svg { transform: scale(1.1); }
+.item:hover .actions .btn:active { transform: scale(0.98); }
+.item:hover .badge { background: color-mix(in srgb, var(--surface-2) 95%, var(--accent-soft)); }
+.item:hover .badge svg { transform: scale(1.1); }
+.item:hover .progress { box-shadow: 0 0 15px rgba(139,124,255,.4); }
 .item .actions .btn { transition: transform .1s, box-shadow .1s; }
 .item .actions .btn:hover { transform: scale(1.05); box-shadow: 0 2px 8px rgba(139,124,255,.3); }
 .item .actions .btn:active { transform: scale(0.98); }
