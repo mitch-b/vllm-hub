@@ -277,21 +277,57 @@ table.mini .mono { font-size: 12px; }
 
 /* Lists */
 .list { display: grid; }
-.item { position: relative; display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: center; padding: 12px 14px; border-radius: 11px; transition: background .12s, box-shadow .12s, transform .05s; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+.item { position: relative; display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: center; padding: 12px 14px; border-radius: 11px; transition: background .12s, box-shadow .12s, transform .05s; box-shadow: 0 1px 2px rgba(0,0,0,.08); cursor: pointer; }
 .item:hover { background: var(--surface-2); box-shadow: 0 2px 6px rgba(139,124,255,.15), 0 0 10px rgba(139,124,255,.1); transform: translateY(-1px); }
 .item:active { transform: translateY(0); }
 .item + .item::before { content: ""; position: absolute; top: 0; left: 14px; right: 14px; height: 1px; background: var(--border); }
 .item:hover + .item::before, .item:hover::before { display: none; }
-.avatar { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; font-weight: 650; font-size: 13px; color: #fff; flex: none; box-shadow: 0 0 12px rgba(139,124,255,.4); transition: transform .15s, box-shadow .15s; }
-.avatar:hover { transform: scale(1.08); box-shadow: 0 0 18px rgba(139,124,255,.6); }
 .item .title { font-weight: 560; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: -.01em; }
 .item .title .org { color: var(--subtle); font-weight: 450; }
-.item .meta { color: var(--subtle); font-size: 12.5px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 1px; }
-.item .model-facts { color: var(--muted); font-size: 12px; }
-.item .model-facts { color: var(--muted); }
+.item .meta { color: var(--subtle); font-size: 12.5px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 1px; font-weight: 450; }
 .item .meta .sep::before { content: "·"; }
-.item .actions { display: flex; gap: 6px; align-items: center; }
-.item .main { min-width: 0; }
+.item .meta .badge { height: 19px; font-size: 11.5px; }
+.item .meta span { transition: color .15s; }
+.item .meta:hover span { color: var(--muted); }
+.item .model-facts { color: var(--muted); font-size: 12px; font-weight: 400; }
+.item .model-facts:hover { color: var(--text); }
+.item .title:hover { color: var(--text); }
+.item .title .org:hover { color: var(--muted); }
+.item:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-left: 12px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.3), 0 0 20px rgba(139,124,255,.2);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: nowrap;
+  z-index: 100;
+  opacity: 0;
+  transition: opacity .2s;
+  pointer-events: none;
+}
+.item:hover::after { opacity: 1; }
+.item[data-tooltip]::after { content: attr(data-tooltip); }
+.item .actions .btn { transition: transform .1s, box-shadow .1s; }
+.item .actions .btn:hover { transform: scale(1.05); box-shadow: 0 2px 8px rgba(139,124,255,.3); }
+.item .actions .btn:active { transform: scale(0.98); }
+.item .actions .btn svg { transition: transform .15s; }
+.item .actions .btn:hover svg { transform: scale(1.1); }
+.item.expanded { background: color-mix(in srgb, var(--surface-2) 95%, var(--accent-soft)); box-shadow: 0 2px 8px rgba(139,124,255,.2), 0 0 15px rgba(139,124,255,.15); transform: translateY(-2px); }
+.item.expanded .actions .btn { opacity: 0; pointer-events: none; }
+.item[data-act="expand"] { cursor: pointer; }
+.item[data-act="expand"]:hover { background: color-mix(in srgb, var(--surface-2) 95%, var(--accent-soft)); }
+.item[data-act="expand"] .btn { transition: transform .15s, opacity .15s; }
+.item[data-act="expand"]:hover .btn { transform: scale(1.05); opacity: 1; }
+.item[data-act="expand"][aria-expanded="true"] .btn { transform: rotate(90deg); }
 .item .bar { margin-top: 8px; }
 .item.expanded { background: var(--surface-2); }
 .details { grid-column: 2 / -1; display: grid; gap: 8px; padding: 2px 0 4px; font-size: 13px; color: var(--muted); }
@@ -873,7 +909,8 @@ function renderLibrary() {
     const live = j.status === 'downloading' || j.status === 'queued';
     const syncing = j.status === 'done';
     const pct = jobPercent(j);
-    rows.push(`<div class="item">${avatar(j.repo_id)}<div class="main"><div class="title">${nameHtml(j.repo_id)}</div>
+    const tooltip = `${j.repo_id} · ${j.status === 'done' ? 'Ready' : j.status}`;
+    rows.push(`<div class="item" data-act="expand" data-id="${esc(j.repo_id)}" data-tooltip="${tooltip}">${avatar(j.repo_id)}<div class="main"><div class="title">${nameHtml(j.repo_id)}</div>
       <div class="meta">${syncing ? '<span>Updating library…</span>' : live ? (j.finalizing ? '<span>Finalizing snapshot…</span>' : j.total ? `<span>${fmtGB(j.done)} of ${fmtGB(j.total)}</span><span class="sep"></span><span>${pct}%</span>` : '<span>Preparing…</span>')
         + (!j.finalizing && j.speed_bps ? `<span class="sep"></span><span>${(j.speed_bps / 1e6).toFixed(1)} MB/s</span>` : '') + (!j.finalizing && j.eta_s != null ? `<span class="sep"></span><span>${fmtEta(j.eta_s)} left</span>` : '')
         : `<span style="color:var(--bad)">${esc(j.status === 'cancelled' ? 'Cancelled' : j.error || 'Download failed')}</span>`}</div>
@@ -887,7 +924,8 @@ function renderLibrary() {
     const current = v.model === m.id && (p === 'ready' || p === 'loading');
     const status = current ? (p === 'ready' ? '<span class="badge ok"><span class="dot"></span>Serving</span>' : '<span class="badge warn"><span class="dot pulse"></span>Starting</span>') : '';
     const last = store.get('ctx.' + m.id, null);
-    rows.push(`<div class="item">${avatar(m.id)}<div class="main"><div class="title">${nameHtml(m.id)}</div>
+    const tooltip = `${m.id} · ${m.size_gib == null ? 'Size unknown' : m.size_gib + ' GB'} · ${last ? last + ' context' : '—'} · ${m.last_used ? fmtAgo(m.last_used) : '—'}`;
+    rows.push(`<div class="item" data-act="expand" data-id="${esc(m.id)}" data-tooltip="${tooltip}">${avatar(m.id)}<div class="main"><div class="title">${nameHtml(m.id)}</div>
       <div class="meta"><span>${m.size_gib == null ? 'Size unknown' : m.size_gib + ' GB'}</span>${last ? `<span class="sep"></span><span>${fmtCtx(last)} context</span>` : ''}${m.last_used ? `<span class="sep"></span><span>used ${fmtAgo(m.last_used)}</span>` : ''}</div></div>
       <div class="actions">${status}
         ${current ? `<button class="btn sm danger" data-act="stop">${icon('stop')}Stop</button>` : `<button class="btn sm" data-act="run" data-id="${esc(m.id)}" data-w="${m.size_gib}" ${inferenceAttrs()}>${icon('play')}Run</button>`}
@@ -938,13 +976,14 @@ function discoverRow(m, disabled) {
   const hint = nativeBackend() ? m.context_hint ? `Auto default ${fmtCtx(m.context_hint)}` : ''
     : hasFit() && m.context_hint ? `${m.context_learned ? 'Measured context' : m.launch_profile ? 'Recipe target' : 'Estimated context'} ${fmtCtx(m.context_hint)}` : '';
   const context = [hint, `Model maximum ${m.max_context ? fmtCtx(m.max_context) : 'unknown'}`].filter(Boolean).join(' · ');
+  const tooltip = `${m.id} · ${size ? size + (nativeBackend() ? ' GiB' : ' GB') : 'unknown'} · ${m.quant || 'unknown'} · ${m.likes != null ? fmtNum(m.likes) : '—'} likes`;
   let actions;
   if (local) actions = `<span class="badge">In library</span><button class="btn sm" data-act="run" data-id="${esc(m.id)}" data-w="${size ?? ''}" ${inferenceAttrs()}>${icon('play')}Run</button>`;
   else if (job) actions = `<span class="badge accent">${job.finalizing ? 'Finalizing snapshot…' : job.total ? jobPercent(job) + '%' : 'Queued'}</span>`;
   else if (!inference().available) actions = `<button class="btn sm" data-act="pull" data-id="${esc(m.id)}">${icon('down')}Download</button>`;
   else actions = `<button class="btn ghost icon sm" data-act="pull" data-id="${esc(m.id)}" ${disabled ? 'disabled' : ''} aria-label="Download only" title="Download only">${icon('down')}</button>
     <button class="btn sm" data-act="run" data-id="${esc(m.id)}" data-w="${size ?? ''}" ${disabled ? 'disabled' : ''}>${icon('play')}Run</button>`;
-  return `<div class="item ${open ? 'expanded' : ''}">${avatar(m.id)}
+  return `<div class="item ${open ? 'expanded' : ''}" data-act="expand" data-id="${esc(m.id)}" aria-expanded="${open}" data-tooltip="${tooltip}">${avatar(m.id)}
     <div class="main"><div class="title">${nameHtml(m.id)} ${m.gated ? `<span title="Gated: needs HF_TOKEN" style="color:var(--subtle)">${icon('lock').replace('<svg', '<svg style="width:12px;height:12px;vertical-align:-1px"')}</span>` : ''}</div>
       <div class="meta">${label ? `<span class="badge ${cls}" style="height:19px;font-size:11.5px"><span class="dot"></span>${label}</span>` : ''}${meta}
         <button class="btn ghost sm" style="height:22px;padding:0 6px;font-size:12px" data-act="expand" data-id="${esc(m.id)}" aria-expanded="${open}">Details${icon('chev', 'chev').replace('<svg', '<svg style="width:12px;height:12px"')}</button></div>
