@@ -73,7 +73,7 @@ code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
 .brand .title { position: relative; z-index: 1; background: linear-gradient(90deg, var(--text), color-mix(in srgb, var(--text) 85%, var(--accent)), var(--accent-2));
   -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
   animation: gradient-shift 4s ease-in-out infinite;
-  background-size: 200% auto; }
+  background-size: 200% auto; font-weight: 650; letter-spacing: -.01em; }
 @keyframes gradient-shift { 0% { background-position: 0% center; } 50% { background-position: 100% center; } 100% { background-position: 0% center; } }
 .spacer { flex: 1; }
 .gpu { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12.5px; }
@@ -286,6 +286,7 @@ table.mini .mono { font-size: 12px; }
 .item .title { font-weight: 560; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: -.01em; }
 .item .title .org { color: var(--subtle); font-weight: 450; }
 .item .meta { color: var(--subtle); font-size: 12.5px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 1px; }
+.item .model-facts { color: var(--muted); font-size: 12px; }
 .item .model-facts { color: var(--muted); }
 .item .meta .sep::before { content: "·"; }
 .item .actions { display: flex; gap: 6px; align-items: center; }
