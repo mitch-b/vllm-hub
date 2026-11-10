@@ -160,12 +160,13 @@ a svg { width: 1em; height: 1em; flex: none; vertical-align: -0.15em; }
 .rt-actions { display: flex; gap: 8px; flex-wrap: wrap; transition: gap .15s; }
 .rt-actions:hover { gap: 10px; }
 .empty { display: flex; gap: 18px; align-items: center; }
-.empty .glyph { width: 48px; height: 48px; flex: none; border-radius: 14px; display: grid; place-items: center; background: var(--surface-2); border: 1px solid var(--border); color: var(--muted); box-shadow: 0 0 15px rgba(139,124,255,.2); transition: transform .2s, box-shadow .2s; }
-.empty .glyph:hover { transform: scale(1.05); box-shadow: 0 0 20px rgba(139,124,255,.3); }
+.empty .glyph { width: 48px; height: 48px; flex: none; border-radius: 14px; display: grid; place-items: center; background: var(--surface-2); border: 1px solid var(--border); color: var(--muted); box-shadow: 0 0 15px rgba(139,124,255,.2); transition: transform .2s, box-shadow .2s, border-color .2s; }
+.empty .glyph:hover { transform: scale(1.05); box-shadow: 0 0 20px rgba(139,124,255,.3), 0 0 0 1px rgba(255,255,255,.08); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
 .empty .glyph svg { width: 22px; height: 22px; }
 .progress { height: 4px; border-radius: 99px; background: var(--surface-3); overflow: hidden; position: relative; }
 .progress > i { position: absolute; inset: 0 auto 0 0; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .5s ease; box-shadow: 0 0 12px rgba(139,124,255,.6); }
 .progress.indeterminate > i { width: 35%; animation: slide 1.3s ease-in-out infinite; }
+.progress:hover > i { box-shadow: 0 0 18px rgba(139,124,255,.8); }
 .progress:hover > i { box-shadow: 0 0 18px rgba(139,124,255,.8); }
 @keyframes slide { 0% { left: -35%; } 100% { left: 100%; } }
 
@@ -311,7 +312,7 @@ table.mini .mono { font-size: 12px; }
 .blank { padding: 36px 16px; text-align: center; color: var(--muted); display: grid; gap: 10px; justify-items: center; box-shadow: inset 0 1px 0 rgba(255,255,255,.02); transition: background .15s; }
 .blank:hover { background: color-mix(in srgb, var(--surface) 95%, var(--accent-soft)); }
 .blank b { color: var(--text); font-weight: 600; }
-.skeleton { height: 58px; margin: 4px 0; border-radius: 11px; background: linear-gradient(90deg, var(--surface-2), var(--surface-3), var(--surface-2)); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; box-shadow: 0 0 10px rgba(139,124,255,.2); transition: box-shadow .15s; }
+.skeleton { height: 58px; margin: 4px 0; border-radius: 11px; background: linear-gradient(90deg, var(--surface-2), var(--surface-3), var(--surface-2)); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; box-shadow: 0 0 10px rgba(139,124,255,.2); transition: box-shadow .15s, background-position .15s; }
 .skeleton:hover { box-shadow: 0 0 15px rgba(139,124,255,.3); }
 @keyframes shimmer { to { background-position: -200% 0; } }
 
