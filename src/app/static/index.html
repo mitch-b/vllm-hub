@@ -316,6 +316,10 @@ table.mini .mono { font-size: 12px; }
 }
 .item:hover::after { opacity: 1; }
 .item[data-tooltip]::after { content: attr(data-tooltip); }
+.item:hover .meta span { color: var(--muted); }
+.item:hover .model-facts { color: var(--text); }
+.item:hover .title { color: var(--text); }
+.item:hover .title .org { color: var(--muted); }
 .item .actions .btn { transition: transform .1s, box-shadow .1s; }
 .item .actions .btn:hover { transform: scale(1.05); box-shadow: 0 2px 8px rgba(139,124,255,.3); }
 .item .actions .btn:active { transform: scale(0.98); }
@@ -909,7 +913,9 @@ function renderLibrary() {
     const live = j.status === 'downloading' || j.status === 'queued';
     const syncing = j.status === 'done';
     const pct = jobPercent(j);
-    const tooltip = `${j.repo_id} · ${j.status === 'done' ? 'Ready' : j.status}`;
+    const speed = j.speed_bps ? (j.speed_bps / 1e6).toFixed(1) + ' MB/s' : '—';
+    const eta = j.eta_s != null ? fmtEta(j.eta_s) : '—';
+    const tooltip = `${j.repo_id} · ${j.status === 'done' ? 'Ready' : j.status} · ${speed} · ${eta}`;
     rows.push(`<div class="item" data-act="expand" data-id="${esc(j.repo_id)}" data-tooltip="${tooltip}">${avatar(j.repo_id)}<div class="main"><div class="title">${nameHtml(j.repo_id)}</div>
       <div class="meta">${syncing ? '<span>Updating library…</span>' : live ? (j.finalizing ? '<span>Finalizing snapshot…</span>' : j.total ? `<span>${fmtGB(j.done)} of ${fmtGB(j.total)}</span><span class="sep"></span><span>${pct}%</span>` : '<span>Preparing…</span>')
         + (!j.finalizing && j.speed_bps ? `<span class="sep"></span><span>${(j.speed_bps / 1e6).toFixed(1)} MB/s</span>` : '') + (!j.finalizing && j.eta_s != null ? `<span class="sep"></span><span>${fmtEta(j.eta_s)} left</span>` : '')
@@ -924,7 +930,8 @@ function renderLibrary() {
     const current = v.model === m.id && (p === 'ready' || p === 'loading');
     const status = current ? (p === 'ready' ? '<span class="badge ok"><span class="dot"></span>Serving</span>' : '<span class="badge warn"><span class="dot pulse"></span>Starting</span>') : '';
     const last = store.get('ctx.' + m.id, null);
-    const tooltip = `${m.id} · ${m.size_gib == null ? 'Size unknown' : m.size_gib + ' GB'} · ${last ? last + ' context' : '—'} · ${m.last_used ? fmtAgo(m.last_used) : '—'}`;
+    const likes = m.likes != null ? fmtNum(m.likes) : '—';
+    const tooltip = `${m.id} · ${m.size_gib == null ? 'Size unknown' : m.size_gib + ' GB'} · ${last ? last + ' context' : '—'} · ${likes} likes · ${m.last_used ? fmtAgo(m.last_used) : '—'}`;
     rows.push(`<div class="item" data-act="expand" data-id="${esc(m.id)}" data-tooltip="${tooltip}">${avatar(m.id)}<div class="main"><div class="title">${nameHtml(m.id)}</div>
       <div class="meta"><span>${m.size_gib == null ? 'Size unknown' : m.size_gib + ' GB'}</span>${last ? `<span class="sep"></span><span>${fmtCtx(last)} context</span>` : ''}${m.last_used ? `<span class="sep"></span><span>used ${fmtAgo(m.last_used)}</span>` : ''}</div></div>
       <div class="actions">${status}
@@ -976,7 +983,8 @@ function discoverRow(m, disabled) {
   const hint = nativeBackend() ? m.context_hint ? `Auto default ${fmtCtx(m.context_hint)}` : ''
     : hasFit() && m.context_hint ? `${m.context_learned ? 'Measured context' : m.launch_profile ? 'Recipe target' : 'Estimated context'} ${fmtCtx(m.context_hint)}` : '';
   const context = [hint, `Model maximum ${m.max_context ? fmtCtx(m.max_context) : 'unknown'}`].filter(Boolean).join(' · ');
-  const tooltip = `${m.id} · ${size ? size + (nativeBackend() ? ' GiB' : ' GB') : 'unknown'} · ${m.quant || 'unknown'} · ${m.likes != null ? fmtNum(m.likes) : '—'} likes`;
+  const likes = m.likes != null ? fmtNum(m.likes) : '—';
+  const tooltip = `${m.id} · ${size ? size + (nativeBackend() ? ' GiB' : ' GB') : 'unknown'} · ${m.quant || 'unknown'} · ${likes} likes · ${context}`;
   let actions;
   if (local) actions = `<span class="badge">In library</span><button class="btn sm" data-act="run" data-id="${esc(m.id)}" data-w="${size ?? ''}" ${inferenceAttrs()}>${icon('play')}Run</button>`;
   else if (job) actions = `<span class="badge accent">${job.finalizing ? 'Finalizing snapshot…' : job.total ? jobPercent(job) + '%' : 'Queued'}</span>`;
