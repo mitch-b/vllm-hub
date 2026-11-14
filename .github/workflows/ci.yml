@@ -96,7 +96,7 @@ jobs:
         run: |
           python3 -c "import json,os; print(json.dumps({'pr': int(os.environ['PR']), 'sha': os.environ['SHA']}))" > shots/pr.json
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ui-screenshots
           path: shots/
